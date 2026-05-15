@@ -42,7 +42,7 @@ exports.AppModule = AppModule = __decorate([
                     password: config.get('DB_PASSWORD') ?? 'root',
                     database: config.get('DB_NAME') ?? 'africom_db',
                     autoLoadEntities: true,
-                    synchronize: config.get('NODE_ENV') !== 'production',
+                    synchronize: false,
                     logging: true,
                 }),
             }),

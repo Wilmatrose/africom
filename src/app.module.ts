@@ -14,6 +14,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { GroupsModule } from './modules/groups/groups.module';
 import { NotificationsModule } from './modules/notifications/notifications.module'; // NEW
+import { MessagingModule } from './modules/messaging/messaging.module';
 
 @Module({
   imports: [
@@ -35,7 +36,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
         database: config.get('DB_NAME') ?? 'africom_db',
 
         autoLoadEntities: true, // IMPORTANT (Automatically loads Notification entity)
-        synchronize: config.get('NODE_ENV') !== 'production',
+        synchronize: false,
         logging: true,
       }),
     }),
@@ -50,7 +51,8 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     TournamentsModule,
     CommunitiesModule,
     GroupsModule,
-    NotificationsModule, // NEW
+    NotificationsModule,
+    MessagingModule, // NEW
   ],
 })
 export class AppModule {}
