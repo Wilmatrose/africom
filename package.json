@@ -4,7 +4,7 @@
   "description": "NestJS backend for Africom Socials",
   "main": "dist/main.js",
   "scripts": {
-    "build": "./node_modules/.bin/nest build",
+    "build": "npx nest build",
     "start": "node dist/main",
     "start:dev": "npx nest start --watch",
     "start:prod": "node dist/main",
@@ -40,7 +40,7 @@
     "uuid": "^14.0.0"
   },
   "devDependencies": {
-    "@nestjs/cli": "^10.0.0",
+    "@nestjs/cli": "^10.4.9",
     "@nestjs/schematics": "^10.0.0",
     "@nestjs/testing": "^10.0.0",
     "@types/axios": "^0.9.36",
