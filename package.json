@@ -4,10 +4,10 @@
   "description": "NestJS backend for Africom Socials",
   "main": "dist/main.js",
   "scripts": {
-    "start": "nest start",
-    "start:dev": "nest start --watch",
+    "build": "npx nest build",
+    "start": "npx nest start",
+    "start:dev": "npx nest start --watch",
     "start:prod": "node dist/main",
-    "build": "nest build",
     "migration:generate": "npm run typeorm -- migration:generate src/migrations/AutoMigration",
     "migration:run": "npm run typeorm -- migration:run",
     "migration:revert": "npm run typeorm -- migration:revert"
