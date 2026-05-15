@@ -15,8 +15,11 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
 
   app.enableCors({
-    origin: '*',
-    // FIX: Added 'PATCH' to the list of allowed methods
+    // REPLACE '*' with your actual Firebase URL
+    origin: [
+      'https://africom-social.web.app', 
+      'http://localhost:3000' // Keep this for local testing
+    ],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     credentials: true,
   });
@@ -25,7 +28,7 @@ async function bootstrap() {
 
   await app.listen(port);
 
-  console.log(`Backend running on: http://localhost:${port}`);
+  console.log(`Backend running on port ${port}`);
 }
 
 bootstrap();
