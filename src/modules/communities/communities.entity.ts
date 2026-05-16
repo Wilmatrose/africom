@@ -75,7 +75,7 @@ export class CommunityPost {
   // This allows the server to start with existing NULL data.
   // DELETE THIS OPTION after cleaning the DB.
   // ==================================================
-  @ManyToOne(() => Community, community => community.posts, { nullable: true })
+  @ManyToOne(() => Community, community => community.posts, )
   @JoinColumn({ name: 'communityId' })
   community: Community;
   // ==================================================
