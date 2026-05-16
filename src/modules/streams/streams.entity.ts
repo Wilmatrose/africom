@@ -1,4 +1,5 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import { User } from '../users/entities/user.entity'; // Adjust path to your User entity
 
 @Entity('live_sessions')
 export class LiveSession {
@@ -8,16 +9,19 @@ export class LiveSession {
   @Column()
   creatorId: string;
 
-  @Column()
-  creatorName: string;
+  // REMOVED: creatorName (We will get this from the User relation)
+  // REMOVED: thumbnailUrl (We will get avatar from the User relation)
 
   @Column()
   platform: 'YOUTUBE' | 'TWITCH' | 'TIKTOK';
 
-  // We store the ID so the Mobile App can construct the deep link
-  // e.g., for TikTok: "@username", for YouTube: "video_id"
+  // The clean ID extracted from the URL (e.g., "dQw4w9WgXcQ" or "emergency_gadgets")
   @Column()
   platformStreamId: string; 
+
+  // NEW: The full URL pasted by the creator
+  @Column({ nullable: true })
+  streamUrl: string;
 
   @Column({ default: false })
   isLive: boolean;
@@ -28,8 +32,8 @@ export class LiveSession {
   @CreateDateColumn()
   startedAt: Date;
 
-
-@Column({ nullable: true })
-thumbnailUrl: string;
+  // OPTIONAL: Relation to easily fetch user data (recommended)
+  @ManyToOne(() => User)
+  @JoinColumn({ name: 'creatorId' })
+  creator: User;
 }
-
