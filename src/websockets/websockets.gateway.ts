@@ -11,7 +11,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
-import { OnEvent } from '@nestjs/event-emitter'; // ADDED: To listen for events
+import { OnEvent } from '@nestjs/event-emitter'; 
 import { WalletService } from '../modules/wallet/wallet.service';
 import { UsersService } from '../modules/users/users/users.service';
 
@@ -50,6 +50,16 @@ export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconne
 
   // Store socket ID -> User ID mapping
   private connectedUsers: Map<string, { userId: string; username: string }> = new Map();
+
+  // --- SERVER-SIDE PRICE LIST (Source of Truth) ---
+  // This prevents users from modifying the app to send gifts for cheaper prices.
+  private readonly GIFT_PRICES: { [key: string]: number } = {
+    'Rose': 50,
+    'Fire': 100,
+    'Car': 500,
+    'Jet': 1000,
+  };
+  // -------------------------------------------------
 
   constructor(
     private readonly jwtService: JwtService,
@@ -144,37 +154,50 @@ export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconne
         return;
       }
 
+      // --- SECURITY: VALIDATE GIFT PRICE ON SERVER ---
+      // We ignore the 'cost' sent by the client and look it up here.
+      const giftName = payload.giftName;
+      const actualCost = this.GIFT_PRICES[giftName];
+
+      if (actualCost === undefined) {
+        this.logger.warn(`Unknown gift attempted: ${giftName}`);
+        client.emit('error', { message: 'Invalid gift item' });
+        return;
+      }
+      // ---------------------------------------------------
+
       const ref = `gift-${Date.now()}`;
 
+      // Use the server-verified 'actualCost', not the client's 'payload.cost'
       await this.walletService.debitFan(
         sender.userId, 
-        payload.cost, 
+        actualCost, 
         ref, 
-        payload.giftName
+        giftName
       );
 
       await this.walletService.creditCreator(
         recipient.id, 
-        payload.cost, 
+        actualCost, 
         ref, 
-        payload.giftName
+        giftName
       );
 
       this.server.to(`user_${recipient.id}`).emit('onCreatorAlert', {
         type: 'GIFT',
         sender: sender.username,
-        gift: payload.giftName,
-        amount: payload.cost,
+        gift: giftName,
+        amount: actualCost,
       });
 
       this.server.to(`session_${payload.sessionId}`).emit('onGiftReceived', {
-        message: `${sender.username} sent ${payload.giftName}!`,
+        message: `${sender.username} sent ${giftName}!`,
         sender: sender.username,
-        giftName: payload.giftName,
-        amount: payload.cost,
+        giftName: giftName,
+        amount: actualCost,
       });
 
-      this.logger.log(`✅ Gift sent from ${sender.username} to ${recipient.username}`);
+      this.logger.log(`✅ Gift sent from ${sender.username} to ${recipient.username} (Cost: ${actualCost})`);
 
     } catch (error) {
       this.logger.error('Gift Error:', error);
