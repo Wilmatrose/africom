@@ -16,17 +16,70 @@ import {
 
 import { UsersService } from '../users/users/users.service';
 import { KYCStatus } from '../users/entities/user.entity';
+import { User } from '../users/entities/user.entity'; // Import User Entity for Locking
 
 @Injectable()
 export class WalletService {
+  // Rate: 10 Naira = 1 Coin
+  private readonly NAIRA_PER_COIN = 10;
+
   constructor(
     @InjectRepository(Transaction)
     private readonly transactionRepo: Repository<Transaction>,
+    // Inject User Repo for Locking
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
     private readonly usersService: UsersService,
   ) {}
 
   // ==================================================
-  // 1. CREDIT USER (COIN PURCHASE)
+  // 1. PURCHASE COINS (Called by Payments Webhook)
+  // ==================================================
+  async purchaseCoins(userId: string, amountInNaira: number, reference: string) {
+    // Convert Naira to Coins
+    const coinsToCredit = amountInNaira / this.NAIRA_PER_COIN;
+
+    await this.userRepo.manager.transaction(async (transactionalEntityManager) => {
+      // 1. Lock User Row
+      const user = await transactionalEntityManager.findOne(User, {
+        where: { id: userId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!user) throw new NotFoundException('User not found');
+
+      // 2. Update Balance
+      user.coinBalance += coinsToCredit;
+      await transactionalEntityManager.save(User, user);
+
+      // 3. Log Transaction
+      const tx = transactionalEntityManager.create(Transaction, {
+        userId,
+        amount: coinsToCredit,
+        type: TransactionType.CREDIT,
+        category: TransactionCategory.COIN_PURCHASE,
+        status: TransactionStatus.COMPLETED,
+        reference,
+        metadata: {
+          description: 'Coin purchase credited',
+          paidAmount: amountInNaira, // Store original Naira amount
+        },
+      });
+
+      await transactionalEntityManager.save(Transaction, tx);
+    });
+
+    // Fetch updated user to return fresh state
+    const updatedUser = await this.usersService.findById(userId);
+    return {
+      success: true,
+      newBalance: updatedUser.coinBalance,
+      coinsAdded: coinsToCredit,
+    };
+  }
+
+  // ==================================================
+  // 2. CREDIT USER (Generic / Legacy)
   // ==================================================
   async creditUser(
     userId: string,
@@ -50,7 +103,7 @@ export class WalletService {
       status: TransactionStatus.COMPLETED,
       reference,
       metadata: {
-        description: 'Coin purchase credited',
+        description: 'Coins credited',
       },
     });
 
@@ -64,81 +117,103 @@ export class WalletService {
   }
 
   // ==================================================
-  // 2. DEBIT FAN (SEND GIFT)
+  // 3. DEBIT FAN (SEND GIFT) - WITH LOCKING
   // ==================================================
   async debitFan(
-userId: string, amount: number, reference: string, giftName: string,
+    userId: string, 
+    amount: number, 
+    reference: string, 
+    giftName: string,
   ) {
-    const user = await this.usersService.findById(userId);
+    await this.userRepo.manager.transaction(async (transactionalEntityManager) => {
+      // 1. Lock User Row
+      const user = await transactionalEntityManager.findOne(User, {
+        where: { id: userId },
+        lock: { mode: 'pessimistic_write' },
+      });
 
-    if (user.coinBalance < amount) {
-      throw new BadRequestException('Insufficient funds');
-    }
+      if (!user) throw new NotFoundException('User not found');
 
-    user.coinBalance -= amount;
+      if (user.coinBalance < amount) {
+        throw new BadRequestException('Insufficient funds');
+      }
 
-    await this.usersService.updateProfile(userId, {
-      coinBalance: user.coinBalance,
+      // 2. Deduct
+      user.coinBalance -= amount;
+      await transactionalEntityManager.save(User, user);
+
+      // 3. Log Transaction
+      const tx = transactionalEntityManager.create(Transaction, {
+        userId,
+        amount,
+        type: TransactionType.DEBIT,
+        category: TransactionCategory.GIFT_SENT,
+        status: TransactionStatus.COMPLETED,
+        reference,
+        metadata: {
+          description: 'Gift sent',
+          giftName: giftName,
+        },
+      });
+
+      await transactionalEntityManager.save(Transaction, tx);
     });
 
-    const tx = this.transactionRepo.create({
-      userId,
-      amount,
-      type: TransactionType.DEBIT,
-      category: TransactionCategory.GIFT_SENT,
-      status: TransactionStatus.COMPLETED,
-      reference,
-      metadata: {
-        description: 'Gift sent',
-      },
-    });
-
-    await this.transactionRepo.save(tx);
-
+    const updatedUser = await this.usersService.findById(userId);
     return {
       success: true,
-      newBalance: user.coinBalance,
-      transaction: tx,
+      newBalance: updatedUser.coinBalance,
     };
   }
 
   // ==================================================
-  // 3. CREDIT CREATOR (Gift Received)
+  // 4. CREDIT CREATOR (Gift Received) - WITH LOCKING
   // ==================================================
   async creditCreator(
-creatorId: string, amount: number, reference: string, giftName: string,
+    creatorId: string, 
+    amount: number, 
+    reference: string, 
+    giftName: string,
   ) {
-    const user = await this.usersService.findById(creatorId);
+    await this.userRepo.manager.transaction(async (transactionalEntityManager) => {
+      // 1. Lock User Row
+      const user = await transactionalEntityManager.findOne(User, {
+        where: { id: creatorId },
+        lock: { mode: 'pessimistic_write' },
+      });
 
-    user.coinBalance += amount;
+      if (!user) throw new NotFoundException('Creator not found');
 
-    await this.usersService.updateProfile(creatorId, {
-      coinBalance: user.coinBalance,
+      // 2. Add Coins
+      user.coinBalance += amount;
+      await transactionalEntityManager.save(User, user);
+
+      // 3. Log Transaction
+      const tx = transactionalEntityManager.create(Transaction, {
+        userId: creatorId,
+        amount,
+        type: TransactionType.CREDIT,
+        category: TransactionCategory.GIFT_RECEIVED,
+        status: TransactionStatus.COMPLETED,
+        reference,
+        metadata: {
+          description: 'Gift received',
+          giftName: giftName,
+        },
+      });
+
+      await transactionalEntityManager.save(Transaction, tx);
     });
 
-    const tx = this.transactionRepo.create({
-      userId: creatorId,
-      amount,
-      type: TransactionType.CREDIT,
-      category: TransactionCategory.GIFT_RECEIVED,
-      status: TransactionStatus.COMPLETED,
-      reference,
-      metadata: {
-        description: 'Gift received',
-      },
-    });
-
-    await this.transactionRepo.save(tx);
-
+    const updatedUser = await this.usersService.findById(creatorId);
     return {
       success: true,
-      newBalance: user.coinBalance,
-      transaction: tx,
+      newBalance: updatedUser.coinBalance,
     };
   }
 
   // ==================================================
-  // 4. WITHDRAWAL REQUEST (Deducts coins immediately)
+  // 5. WITHDRAWAL REQUEST - WITH LOCKING
   // ==================================================
   async withdraw(
     userId: string,
@@ -149,48 +224,54 @@ creatorId: string, amount: number, reference: string, giftName: string,
       bankName: string;
     },
   ) {
-    const user = await this.usersService.findById(userId);
+    await this.userRepo.manager.transaction(async (transactionalEntityManager) => {
+      // 1. Lock User Row
+      const user = await transactionalEntityManager.findOne(User, {
+        where: { id: userId },
+        lock: { mode: 'pessimistic_write' },
+      });
 
-    if (user.kycStatus !== KYCStatus.APPROVED) {
-      throw new BadRequestException('KYC required');
-    }
+      if (!user) throw new NotFoundException('User not found');
 
-    if (user.coinBalance < amount) {
-      throw new BadRequestException('Insufficient balance');
-    }
+      if (user.kycStatus !== KYCStatus.APPROVED) {
+        throw new BadRequestException('KYC required');
+      }
 
-    // DEDUCT IMMEDIATELY
-    user.coinBalance -= amount;
+      if (user.coinBalance < amount) {
+        throw new BadRequestException('Insufficient balance');
+      }
 
-    await this.usersService.updateProfile(userId, {
-      coinBalance: user.coinBalance,
+      // 2. Deduct
+      user.coinBalance -= amount;
+      await transactionalEntityManager.save(User, user);
+
+      // 3. Log Transaction
+      const tx = transactionalEntityManager.create(Transaction, {
+        userId,
+        amount,
+        type: TransactionType.DEBIT,
+        category: TransactionCategory.WITHDRAWAL,
+        status: TransactionStatus.PENDING,
+        reference: `WDR-${Date.now()}`,
+        metadata: {
+          ...bankDetails,
+          requestedAt: new Date().toISOString(),
+        },
+      });
+
+      await transactionalEntityManager.save(Transaction, tx);
     });
 
-    const tx = this.transactionRepo.create({
-      userId,
-      amount,
-      type: TransactionType.DEBIT,
-      category: TransactionCategory.WITHDRAWAL,
-      status: TransactionStatus.PENDING, // Stays pending until Admin Approval
-      reference: `WDR-${Date.now()}`,
-      metadata: {
-        ...bankDetails,
-        requestedAt: new Date().toISOString(),
-      },
-    });
-
-    await this.transactionRepo.save(tx);
-
+    const updatedUser = await this.usersService.findById(userId);
     return {
       success: true,
       message: 'Withdrawal submitted',
-      newBalance: user.coinBalance,
-      transaction: tx,
+      newBalance: updatedUser.coinBalance,
     };
   }
 
   // ==================================================
-  // 5. USER HISTORY
+  // 6. USER HISTORY
   // ==================================================
   async getHistory(userId: string) {
     return this.transactionRepo.find({
@@ -200,7 +281,7 @@ creatorId: string, amount: number, reference: string, giftName: string,
   }
 
   // ==================================================
-  // 6. ADMIN: ALL TRANSACTIONS
+  // 7. ADMIN: ALL TRANSACTIONS
   // ==================================================
   async getAllTransactions() {
     return this.transactionRepo.find({
@@ -209,7 +290,7 @@ creatorId: string, amount: number, reference: string, giftName: string,
   }
 
   // ==================================================
-  // 7. ADMIN: PENDING WITHDRAWALS
+  // 8. ADMIN: PENDING WITHDRAWALS
   // ==================================================
   async getPendingWithdrawals() {
     return this.transactionRepo.find({
@@ -217,30 +298,23 @@ creatorId: string, amount: number, reference: string, giftName: string,
         category: TransactionCategory.WITHDRAWAL,
         status: TransactionStatus.PENDING,
       },
-      order: { createdAt: 'ASC' }, // Oldest first
+      order: { createdAt: 'ASC' },
     });
   }
 
   // ==================================================
-  // 8. ADMIN: APPROVE WITHDRAWAL (Robust Handling)
+  // 9. ADMIN: APPROVE WITHDRAWAL
   // ==================================================
   async approveWithdrawal(id: string, adminId: string) {
     const tx = await this.transactionRepo.findOne({ where: { id } });
 
     if (!tx) throw new NotFoundException('Transaction not found');
 
-    // If we are approving, we assume money was sent. 
-    // We only change status. No balance change needed.
-    if (tx.status !== TransactionStatus.PENDING) {
-      // Allow re-approval if previously rejected? 
-      // Usually safer to disallow, but for this use case we allow PENDING or REJECTED
-      if (tx.status === TransactionStatus.APPROVED) {
-        throw new BadRequestException('Already approved');
-      }
+    if (tx.status === TransactionStatus.APPROVED) {
+      throw new BadRequestException('Already approved');
     }
 
     tx.status = TransactionStatus.APPROVED;
-
     tx.metadata = {
       ...tx.metadata,
       processedBy: adminId,
@@ -252,7 +326,7 @@ creatorId: string, amount: number, reference: string, giftName: string,
   }
 
   // ==================================================
-  // 9. ADMIN: REJECT WITHDRAWAL (Refund coins)
+  // 10. ADMIN: REJECT WITHDRAWAL (Refund) - WITH LOCKING
   // ==================================================
   async rejectWithdrawal(id: string, adminId: string) {
     const tx = await this.transactionRepo.findOne({ where: { id } });
@@ -260,33 +334,38 @@ creatorId: string, amount: number, reference: string, giftName: string,
     if (!tx) throw new NotFoundException('Transaction not found');
 
     if (tx.status === TransactionStatus.APPROVED) {
-      // If already approved, we CANNOT reject/refund easily without external banking system logic.
-      // Throwing error prevents accidental reversal of a real payment.
-      throw new BadRequestException('Cannot reject approved withdrawal. Contact banking system.');
+      throw new BadRequestException('Cannot reject approved withdrawal.');
     }
 
     if (tx.status !== TransactionStatus.PENDING) {
       throw new BadRequestException('Already processed');
     }
 
-    // REFUND LOGIC: Coins were deducted in withdraw(), so we must add them back.
-    const user = await this.usersService.findById(tx.userId);
+    // Refund with Locking
+    await this.userRepo.manager.transaction(async (transactionalEntityManager) => {
+      const user = await transactionalEntityManager.findOne(User, {
+        where: { id: tx.userId },
+        lock: { mode: 'pessimistic_write' },
+      });
 
-    user.coinBalance += tx.amount;
+      if (!user) throw new NotFoundException('User not found');
 
-    await this.usersService.updateProfile(user.id, {
-      coinBalance: user.coinBalance,
+      // Refund Coins
+      user.coinBalance += tx.amount;
+      await transactionalEntityManager.save(User, user);
+
+      // Update Transaction Status
+      tx.status = TransactionStatus.REJECTED;
+      tx.metadata = {
+        ...tx.metadata,
+        processedBy: adminId,
+        processedAt: new Date().toISOString(),
+        action: 'REJECTED',
+        refund: true,
+      };
+      
+      await transactionalEntityManager.save(Transaction, tx);
     });
-
-    tx.status = TransactionStatus.REJECTED;
-
-    tx.metadata = {
-      ...tx.metadata,
-      processedBy: adminId,
-      processedAt: new Date().toISOString(),
-      action: 'REJECTED',
-      refund: true,
-    };
 
     return this.transactionRepo.save(tx);
   }

@@ -33,19 +33,13 @@ export class User {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  @Column({
-    unique: true,
-  })
+  @Column({ unique: true })
   username!: string;
 
-  @Column({
-    unique: true,
-  })
+  @Column({ unique: true })
   email!: string;
 
-  @Column({
-    name: 'password_hash',
-  })
+  @Column({ name: 'password_hash' })
   passwordHash!: string;
 
   @Column({
@@ -59,36 +53,22 @@ export class User {
   // PROFILE DETAILS
   // =========================
   
-  @Column({
-    name: 'avatar_url',
-    nullable: true,
-  })
+  @Column({ name: 'avatar_url', nullable: true })
   avatarUrl!: string;
 
-  @Column({
-    type: 'text',
-    nullable: true,
-  })
+  @Column({ type: 'text', nullable: true })
   bio!: string;
 
   // =========================
   // KYC
   // =========================
-  @Column({
-    nullable: true,
-  })
+  @Column({ nullable: true })
   fullName!: string;
 
-  @Column({
-    name: 'id_card_url',
-    nullable: true,
-  })
+  @Column({ name: 'id_card_url', nullable: true })
   idCardUrl!: string;
 
-  @Column({
-    name: 'verification_video_url',
-    nullable: true,
-  })
+  @Column({ name: 'verification_video_url', nullable: true })
   verificationVideoUrl!: string;
 
   @Column({
@@ -99,83 +79,47 @@ export class User {
   kycStatus!: KYCStatus;
 
   // =========================
-  // SOCIAL STATS (CACHED)
-  // These columns are useful for quick display without joining tables.
-  // You should manually increment/decrement these in the service when following/unfollowing.
+  // SOCIAL STATS
   // =========================
-  @Column({
-    name: 'followers_count',
-    default: 0,
-  })
+  @Column({ name: 'followers_count', default: 0 })
   followersCount!: number;
 
-  @Column({
-    name: 'following_count',
-    default: 0,
-  })
+  @Column({ name: 'following_count', default: 0 })
   followingCount!: number;
 
   // =========================
-  // RELATIONSHIPS (FOLLOW SYSTEM)
+  // RELATIONSHIPS
   // =========================
-
-  /**
-   * Users who follow this user.
-   * Inverse side of 'following'.
-   */
   @ManyToMany(() => User, (user) => user.following)
   followers!: User[];
 
-  /**
-   * Users that this user follows.
-   * Owner of the relationship (has JoinTable).
-   */
   @ManyToMany(() => User, (user) => user.followers)
   @JoinTable({
-    name: 'user_follows', // Name of the junction table
-    joinColumn: {
-      name: 'followerId', // The ID of the user who is following
-      referencedColumnName: 'id',
-    },
-    inverseJoinColumn: {
-      name: 'followingId', // The ID of the user being followed
-      referencedColumnName: 'id',
-    },
+    name: 'user_follows',
+    joinColumn: { name: 'followerId', referencedColumnName: 'id' },
+    inverseJoinColumn: { name: 'followingId', referencedColumnName: 'id' },
   })
   following!: User[];
 
   // =========================
   // WALLET
   // =========================
-  @Column({
-    name: 'coin_balance',
-    type: 'decimal',
-    precision: 10,
-    scale: 2,
-    default: 0,
-  })
+  // Changed to 'int' because we are dealing with whole Coins (100, 500, 1000)
+  @Column({ name: 'coin_balance', type: 'int', default: 0 })
   coinBalance!: number;
 
   // =========================
   // TRACKING
   // =========================
-  @Column({
-    name: 'last_login_ip',
-    type: 'varchar',
-    nullable: true,
-  })
+  @Column({ name: 'last_login_ip', type: 'varchar', nullable: true })
   lastLoginIp!: string | null;
 
   // =========================
   // DATES
   // =========================
-  @CreateDateColumn({
-    name: 'created_at',
-  })
+  @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 
-  @UpdateDateColumn({
-    name: 'updated_at',
-  })
+  @UpdateDateColumn({ name: 'updated_at' })
   updatedAt!: Date;
 }

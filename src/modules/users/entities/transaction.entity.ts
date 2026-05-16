@@ -6,32 +6,49 @@ import {
   ManyToOne,
   JoinColumn,
 } from 'typeorm';
-import { User } from '../entities/user.entity';
+import { User } from '../../users/entities/user.entity';
 
 export enum TransactionType {
-  CREDIT = 'CREDIT', // Money coming in (Buying coins, Winning)
-  DEBIT = 'DEBIT',   // Money going out (Joining, Withdrawing)
+  CREDIT = 'CREDIT',
+  DEBIT = 'DEBIT',
 }
 
+// Updated Enum to match WalletService logic
 export enum TransactionCategory {
-  PURCHASE = 'PURCHASE',       // User bought coins
-  WITHDRAWAL = 'WITHDRAWAL',   // User cashed out
-  TOURNAMENT = 'TOURNAMENT',   // Paid to join tournament
-  COMMUNITY = 'COMMUNITY',     // Paid to join community
-  REWARD = 'REWARD',           // Admin gave coins
+  COIN_PURCHASE = 'COIN_PURCHASE',
+  GIFT_SENT = 'GIFT_SENT',
+  GIFT_RECEIVED = 'GIFT_RECEIVED',
+  WITHDRAWAL = 'WITHDRAWAL',
+  TOURNAMENT_JOIN = 'TOURNAMENT_JOIN',
+  TOURNAMENT_WIN = 'TOURNAMENT_WIN',
+  COMMUNITY_JOIN = 'COMMUNITY_JOIN',
+  ADMIN_REFUND = 'ADMIN_REFUND',
+}
+
+// New Enum for Withdrawal Status
+export enum TransactionStatus {
+  PENDING = 'PENDING',
+  COMPLETED = 'COMPLETED',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+  FAILED = 'FAILED',
 }
 
 @Entity('transactions')
 export class Transaction {
   @PrimaryGeneratedColumn('uuid')
-  id: string;
+  id!: string;
 
   @Column()
-  userId!: string; // Who paid/received
+  userId!: string;
 
   @ManyToOne(() => User)
   @JoinColumn({ name: 'userId' })
   user!: User;
+
+  // Changed to 'int' to match User coinBalance
+  @Column({ type: 'int' })
+  amount!: number;
 
   @Column({ type: 'enum', enum: TransactionType })
   type!: TransactionType;
@@ -39,11 +56,19 @@ export class Transaction {
   @Column({ type: 'enum', enum: TransactionCategory })
   category!: TransactionCategory;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2 })
-  amount!: number;
+  @Column({ type: 'enum', enum: TransactionStatus, default: TransactionStatus.COMPLETED })
+  status!: TransactionStatus;
+
+  // Unique Reference from KoraPay or Internal ID
+  @Column({ unique: true, nullable: true }) 
+  reference!: string;
+
+  // Flexible data storage (Bank details, Gift names, etc.)
+  @Column({ type: 'jsonb', nullable: true })
+  metadata?: Record<string, any>;
 
   @Column({ nullable: true })
-  description!: string; // e.g. "Joined Tournament #123"
+  description!: string;
 
   @CreateDateColumn()
   createdAt!: Date;

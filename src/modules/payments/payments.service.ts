@@ -1,16 +1,16 @@
-import { Injectable, BadRequestException, Inject, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, Inject, NotFoundException, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosError } from 'axios';
+import { createHmac } from 'crypto'; // Built-in Node module for hashing
 import { WalletService } from '../wallet/wallet.service';
-import { TransactionCategory } from '../wallet/transaction.enum';
-// FIX: Corrected path to User entity
-import { User } from '../users/entities/user.entity'; 
 import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
+import { User } from '../users/entities/user.entity';
 import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
 export class PaymentsService {
+  private readonly logger = new Logger(PaymentsService.name);
   private readonly koraSecretKey: string;
 
   constructor(
@@ -18,22 +18,24 @@ export class PaymentsService {
     @Inject(WalletService) private walletService: WalletService,
     @InjectRepository(User) private userRepo: Repository<User>,
   ) {
-    this.koraSecretKey = this.config.get('KORA_PAY_SECRET_KEY') || '';
+    this.koraSecretKey = this.config.get<string>('KORAPAY_SECRET_KEY') || '';
   }
 
   async initiatePayment(userId: string, amountInNaira: number) {
-    // 1. Fetch User
+    if (!amountInNaira || amountInNaira < 100) {
+      throw new BadRequestException('Minimum top-up is ₦100');
+    }
+
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
-    // 2. Calculate Coins
-    const coinsToReceive = amountInNaira * 100;
-    const reference = `Africom_${uuidv4()}`;
+    // Rate: 10 Naira = 1 Coin
+    const coinsToReceive = amountInNaira / 10; 
+    const reference = `AFC-${uuidv4()}`;
 
     try {
-      // 3. Call KoraPay API
       const response = await axios.post(
         'https://api.korapay.com/merchant/api/v1/charges/initialize',
         {
@@ -58,7 +60,6 @@ export class PaymentsService {
         },
       );
 
-      // 4. Return Checkout URL
       return {
         success: true,
         checkoutUrl: response.data.data.checkout_url,
@@ -66,44 +67,70 @@ export class PaymentsService {
       };
     } catch (error) {
       if (axios.isAxiosError(error)) {
-        console.error('KoraPay Error Response:', error.response?.data || error.message);
+        this.logger.error('KoraPay Error Response:', error.response?.data || error.message);
         throw new BadRequestException(
           'Payment initiation failed: ' + (error.response?.data?.message || 'Unknown error')
         );
-      } else if (error instanceof Error) {
-        console.error('Generic Error:', error.message);
-        throw new BadRequestException('Payment initiation failed: ' + error.message);
       } else {
-        console.error('Unknown Error:', error);
+        this.logger.error('Unknown Error:', error);
         throw new BadRequestException('Payment initiation failed due to an unknown error');
       }
     }
   }
 
-  async verifyWebhook(payload: any, signature: string) {
+  /**
+   * Verifies the KoraPay Webhook Signature
+   * NOTE: This requires the RAW body string, not the parsed JSON object.
+   */
+  async verifyWebhook(payload: any, signature: string, rawBody: string) {
+    // 1. VERIFY SIGNATURE
+    if (this.koraSecretKey) {
+      const expectedSignature = createHmac('sha512', this.koraSecretKey)
+        .update(rawBody) // Hash the raw string exactly as received
+        .digest('hex');
+
+      // Compare securely (timing attack safe comparison usually preferred, but simple check works for MVP)
+      if (expectedSignature !== signature) {
+        this.logger.warn('Invalid Webhook Signature detected. Possible hacking attempt.');
+        // Return 200 OK so they don't retry, but do NOT process payment
+        return { success: false, message: 'Invalid signature' };
+      }
+    } else {
+      this.logger.warn('KORAPAY_SECRET_KEY is missing in .env! Webhook verification skipped.');
+    }
+
+    // 2. PROCESS EVENT
     if (payload.event === 'charge.success') {
       const { data } = payload;
-
-      const userId = data.metadata?.userId;
-      const coins = data.metadata?.coinsToReceive;
       const reference = data.reference;
+      const userId = data.metadata?.userId;
 
-      if (!userId || !coins) {
-        console.error('Webhook Error: Missing metadata');
-        throw new BadRequestException('Invalid payload metadata');
+      if (!userId) {
+        this.logger.error('Webhook Error: Missing userId in metadata');
+        return { success: false, message: 'Invalid metadata' }; 
       }
 
       try {
-        await this.walletService.creditUser(
-          userId,
-          coins,
-          reference,
-          TransactionCategory.COIN_PURCHASE,
+        // Prevent double processing: Check if reference exists in DB? 
+        // For now, we rely on walletService idempotency or simple DB check.
+        // (Ideally, add a check here to see if transaction with this reference already exists)
+
+        await this.walletService.purchaseCoins(
+          userId, 
+          data.amount, 
+          reference 
         );
+
+        this.logger.log(`✅ Successfully credited user ${userId} for reference ${reference}`);
+        
+        // TODO: Emit Socket Event 'wallet_updated' to user_${userId} here if possible
+        // this.websocketsGateway.server.to(`user_${userId}`).emit('notification', { ... });
+
         return { success: true, message: 'Wallet credited' };
+        
       } catch (e) {
-        console.error('Wallet Crediting Error', e);
-        throw new BadRequestException('Failed to credit wallet');
+        this.logger.error('Wallet Crediting Error', e);
+        return { success: false, message: 'Failed to credit wallet' };
       }
     }
 
