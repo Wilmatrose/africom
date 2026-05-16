@@ -1,6 +1,6 @@
 import { Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Message } from '../entities/message.entity';
 import { User } from '../users/entities/user.entity';
 import { Notification } from '../notifications/notification.entity';
@@ -14,6 +14,10 @@ export class MessagingService {
     @InjectRepository(Notification) private notifRepo: Repository<Notification>,
     private eventEmitter: EventEmitter2,
   ) {}
+
+  // =========================
+  // INBOX & CONVERSATIONS
+  // =========================
 
   async getInbox(userId: string) {
     // 1. Accepted Conversations
@@ -52,6 +56,10 @@ export class MessagingService {
     return messages.map(m => this.sanitizeMessage(m, userId));
   }
 
+  // =========================
+  // SENDING & ACCEPTING
+  // =========================
+
   async sendMessage(senderId: string, receiverId: string, content: string, imageUrl?: string) {
     const sender = await this.userRepo.findOne({ 
         where: { id: senderId }, 
@@ -61,13 +69,13 @@ export class MessagingService {
 
     if (!receiver) throw new NotFoundException('User not found');
 
-    // 2. Rule: Must follow to message
+    // Rule: Must follow to message
     const isFollowing = sender.following.some(u => u.id === receiverId);
     if (!isFollowing) {
       throw new ForbiddenException('You must follow this user to send a message');
     }
 
-    // 3. Check if Mutual Follow
+    // Check if Mutual Follow
     const isMutual = sender.followers.some(u => u.id === receiverId);
 
     const message = this.msgRepo.create({
@@ -122,12 +130,12 @@ export class MessagingService {
     return { count };
   }
 
-  // NEW: Called when user opens a chat to clear the badge
-  async markMessagesAsRead(userId: string, senderId: string) {
-    // Update all unread messages FROM senderId TO userId
+  // FIX: Renamed to match the Controller call
+  async markAsRead(currentUserId: string, senderId: string) {
+    // Update all unread messages FROM senderId TO currentUserId
     await this.msgRepo.update(
       { 
-        receiverId: userId, 
+        receiverId: currentUserId, 
         senderId: senderId, 
         isRead: false 
       },
@@ -139,7 +147,9 @@ export class MessagingService {
     return { success: true };
   }
 
-  // --- Helpers ---
+  // =========================
+  // HELPERS
+  // =========================
 
   private async createNotif(userId: string, type: string, msg: string, relatedId: string) {
     const notif = this.notifRepo.create({ userId, type, message: msg, relatedId });

@@ -1,45 +1,65 @@
-import { Controller, Get, Post, Body, Param, UseGuards, Req, Patch } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Body,
+  Param,
+  UseGuards,
+  Req,
+} from '@nestjs/common';
 import { MessagingService } from './messaging.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Controller('messaging')
 @UseGuards(JwtAuthGuard)
 export class MessagingController {
-  // The service is named 'msgService' here
-  constructor(private readonly msgService: MessagingService) {}
+  constructor(private readonly messagingService: MessagingService) {}
+
+  // =========================
+  // STATIC ROUTES FIRST (CRITICAL FOR ROUTING)
+  // =========================
 
   @Get('inbox')
   async getInbox(@Req() req: any) {
-    return this.msgService.getInbox(req.user.id);
+    return this.messagingService.getInbox(req.user.id);
   }
 
-  @Get(':userId')
-  async getMessages(@Param('userId') otherUserId: string, @Req() req: any) {
-    return this.msgService.getMessages(req.user.id, otherUserId);
+  @Get('unread-count') // ✅ Correct Position
+  async getUnreadCount(@Req() req: any) {
+    return this.messagingService.getUnreadCount(req.user.id);
   }
 
   @Post('send')
-  async send(
+  async sendMessage(
     @Body() body: { receiverId: string; content: string; imageUrl?: string },
-    @Req() req: any
+    @Req() req: any,
   ) {
-    return this.msgService.sendMessage(req.user.id, body.receiverId, body.content, body.imageUrl);
+    return this.messagingService.sendMessage(
+      req.user.id,
+      body.receiverId,
+      body.content,
+      body.imageUrl,
+    );
   }
 
   @Patch('accept/:id')
-  async accept(@Param('id') id: string, @Req() req: any) {
-    return this.msgService.acceptRequest(req.user.id, id);
+  async acceptRequest(@Param('id') id: string, @Req() req: any) {
+    return this.messagingService.acceptRequest(id, req.user.id);
   }
 
-  // FIXED: Used 'msgService' instead of 'messagingService'
-  @Get('unread-count')
-  async getUnreadCount(@Req() req: any) {
-    return this.msgService.getUnreadCount(req.user.id);
-  }
-
-  // NEW: Mark messages as read when opening a chat
   @Patch('read/:senderId')
-  async markAsRead(@Req() req: any, @Param('senderId') senderId: string) {
-    return this.msgService.markMessagesAsRead(req.user.id, senderId);
+  async markRead(@Param('senderId') senderId: string, @Req() req: any) {
+    // Make sure you implemented the method in messaging.service.ts as shown above
+    return this.messagingService.markAsRead(req.user.id, senderId);
+  }
+
+  // =========================
+  // DYNAMIC ROUTE LAST
+  // =========================
+
+  @Get(':userId') // ✅ Must be at the bottom
+  async getMessages(@Param('userId') userId: string, @Req() req: any) {
+    return this.messagingService.getMessages(req.user.id, userId);
   }
 }
