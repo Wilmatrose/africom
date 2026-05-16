@@ -29,8 +29,8 @@ export class StreamsController {
       title: string 
     }) 
   {
-    // We use the ID from the JWT token, not the body, to prevent spoofing
-    const creatorId = req.user.userId; 
+    // FIX: Changed from req.user.userId to req.user.id to match JwtStrategy
+    const creatorId = req.user.id; 
     const creatorName = req.user.username; 
 
     return this.streamsService.startSession(
@@ -46,7 +46,7 @@ export class StreamsController {
   @UseGuards(JwtAuthGuard)
   @Post('end/:id')
   async endStream(@Param('id') id: string, @Req() req) {
-    // Optional: Add logic to verify req.user.userId owns this stream
+    // Optional: Add logic to verify req.user.id owns this stream
     return this.streamsService.endSession(id);
   }
 

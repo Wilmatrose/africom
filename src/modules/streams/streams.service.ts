@@ -3,6 +3,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { LiveSession } from './streams.entity';
 
+// Define allowed platforms for strict typing
+type Platform = 'YOUTUBE' | 'TWITCH' | 'TIKTOK';
+
 @Injectable()
 export class StreamsService {
   constructor(
@@ -14,25 +17,39 @@ export class StreamsService {
    * Creator starts a session
    * IMPROVED: Auto-generates Thumbnail URL based on platform
    */
-  async startSession(creatorId: string, platform: string, streamId: string, title: string, creatorName: string) {
+  async startSession(
+    creatorId: string, 
+    platform: string, 
+    streamId: string, 
+    title: string, 
+    creatorName: string
+  ) {
     
     let thumbnailUrl = '';
+    const upperPlatform = platform.toUpperCase() as Platform;
 
     // 1. LOGIC: Generate Thumbnail automatically
-    if (platform.toUpperCase() === 'YOUTUBE') {
+    if (upperPlatform === 'YOUTUBE') {
       // YouTube provides a predictable URL for thumbnails using the Video ID
       thumbnailUrl = `https://img.youtube.com/vi/${streamId}/maxresdefault.jpg`;
     } else {
       // For TikTok/Twitch, use a generated Avatar based on the Creator's Name
+      // We use creatorName for the avatar, but you could use the cleaned streamId if preferred
       thumbnailUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(creatorName)}&background=random&color=fff&size=400`;
     }
 
-    // 2. Create the Session Entity
+    // 2. CLEANUP: Remove '@' from TikTok stream IDs if present
+    let cleanStreamId = streamId;
+    if (upperPlatform === 'TIKTOK' && cleanStreamId.startsWith('@')) {
+      cleanStreamId = cleanStreamId.substring(1);
+    }
+
+    // 3. Create the Session Entity
     const session = this.sessionRepo.create({
       creatorId,
       creatorName,
-      platform: platform.toUpperCase() as 'YOUTUBE' | 'TWITCH' | 'TIKTOK',
-      platformStreamId: streamId,
+      platform: upperPlatform,
+      platformStreamId: cleanStreamId, // Use the cleaned ID
       title,
       thumbnailUrl, // Save the generated URL
       isLive: true,
