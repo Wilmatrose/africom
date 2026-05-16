@@ -78,7 +78,7 @@ export class CommunityPost {
   communityId: string;
 
   // Added back-reference
-  @ManyToOne(() => Community, community => community.posts)
+  @ManyToOne(() => Community, community => community.posts, { nullable: true })
   @JoinColumn({ name: 'communityId' })
   community: Community;
 
