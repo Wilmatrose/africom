@@ -1,5 +1,13 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
-import { User } from '../users/entities/user.entity'; // Import User entity
+import { 
+  Entity, 
+  PrimaryGeneratedColumn, 
+  Column, 
+  CreateDateColumn, 
+  ManyToOne, 
+  OneToMany, 
+  JoinColumn 
+} from 'typeorm';
+import { User } from '../users/entities/user.entity';
 
 @Entity('communities')
 export class Community {
@@ -9,22 +17,36 @@ export class Community {
   @Column()
   creatorId: string;
 
-  // RELATION: The user who created the community
-  @ManyToOne(() => User, { eager: false })
+  @ManyToOne(() => User)
   @JoinColumn({ name: 'creatorId' })
   creator!: User;
 
   @Column()
-  name: string; 
+  name: string;
+
+  // ==================================================
+  // ADDED: Description Column
+  // ==================================================
+  @Column({ type: 'text', nullable: true })
+  description?: string;
 
   @Column({ default: 0 })
-  minCoinsToJoin: number; 
+  minCoinsToJoin: number;
 
   @Column({ nullable: true })
-  imageUrl: string; // Added for community icons
+  imageUrl: string;
 
   @CreateDateColumn()
   createdAt: Date;
+
+  // ==================================================
+  // ADDED: Relations for Posts and Participants
+  // ==================================================
+  @OneToMany(() => CommunityPost, post => post.community)
+  posts: CommunityPost[];
+
+  @OneToMany(() => CommunityParticipant, participant => participant.community)
+  participants: CommunityParticipant[];
 }
 
 @Entity('community_participants')
@@ -38,6 +60,11 @@ export class CommunityParticipant {
   @Column()
   userId!: string;
 
+  // Added back-reference
+  @ManyToOne(() => Community, community => community.participants)
+  @JoinColumn({ name: 'communityId' })
+  community: Community;
+
   @CreateDateColumn()
   joinedAt!: Date;
 }
@@ -49,6 +76,11 @@ export class CommunityPost {
 
   @Column()
   communityId: string;
+
+  // Added back-reference
+  @ManyToOne(() => Community, community => community.posts)
+  @JoinColumn({ name: 'communityId' })
+  community: Community;
 
   @Column()
   authorId: string;

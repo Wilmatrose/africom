@@ -26,19 +26,45 @@ export class CommunitiesService {
   ) {}
 
   // ==================================================
-  // CREATE COMMUNITY
+  // CREATE COMMUNITY (UPDATED)
   // ==================================================
-  async createCommunity(creatorId: string, name: string, minCoins: number) {
+  async createCommunity(
+    creatorId: string, 
+    name: string, 
+    minCoins: number,
+    description?: string,
+    file?: Express.Multer.File // Handle file upload
+  ) {
+    // Basic validation
+    if (!name || name.trim() === '') {
+      throw new BadRequestException('Community name is required');
+    }
+
+    let imageUrl: string | undefined;
+
+    // Handle Image Upload (Simplified: assuming you want to store relative path or URL)
+    // If you are using Cloudinary/S3, upload logic goes here.
+    // For now, we just use the filename if a file was provided.
+    if (file) {
+      // In a real app, you would upload `file` to a cloud service here
+      // and set `imageUrl` to the returned URL.
+      // For local testing, we might just use the filename.
+      imageUrl = file.filename; 
+    }
+
     const community = this.communityRepo.create({
       creatorId,
-      name,
+      name: name.trim(),
+      description: description ? description.trim() : undefined,
       minCoinsToJoin: minCoins,
+      imageUrl: imageUrl,
     });
+    
     return this.communityRepo.save(community);
   }
 
   // ==================================================
-  // GET ALL (ENRICHED WITH CREATOR DATA)
+  // GET ALL
   // ==================================================
   async getAllCommunities() {
     const communities = await this.communityRepo.find({
@@ -49,6 +75,7 @@ export class CommunitiesService {
     return communities.map(c => ({
       id: c.id,
       name: c.name,
+      description: c.description, // Added description
       minCoinsToJoin: c.minCoinsToJoin,
       imageUrl: c.imageUrl,
       createdAt: c.createdAt,
@@ -61,22 +88,20 @@ export class CommunitiesService {
   }
 
   // ==================================================
-  // NEW: GET ONE BY ID (FOR COMMUNITY DETAIL PAGE)
+  // FIND BY ID
   // ==================================================
   async findById(id: string) {
     const community = await this.communityRepo.findOne({
       where: { id },
-      relations: ['creator'], // Load creator relation
+      relations: ['creator'],
     });
 
-    if (!community) {
-      throw new NotFoundException('Community not found');
-    }
+    if (!community) throw new NotFoundException('Community not found');
 
-    // Return mapped object consistent with getAll
     return {
       id: community.id,
       name: community.name,
+      description: community.description, // Added description
       minCoinsToJoin: community.minCoinsToJoin,
       imageUrl: community.imageUrl,
       createdAt: community.createdAt,
@@ -89,7 +114,7 @@ export class CommunitiesService {
   }
 
   // ==================================================
-  // JOIN COMMUNITY (PAYMENT LOGIC)
+  // JOIN COMMUNITY
   // ==================================================
   async joinCommunity(communityId: string, userId: string) {
     const community = await this.communityRepo.findOne({ where: { id: communityId } });
@@ -129,7 +154,7 @@ export class CommunitiesService {
   }
 
   // ==================================================
-  // CREATE POST (SECURE)
+  // CREATE POST
   // ==================================================
   async createPost(communityId: string, authorId: string, authorName: string, text: string, voiceUrl?: string) {
     const community = await this.communityRepo.findOne({ where: { id: communityId } });

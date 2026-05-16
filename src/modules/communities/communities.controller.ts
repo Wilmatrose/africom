@@ -1,9 +1,21 @@
-import { Controller, Get, Post, Body, Param, UseGuards, Req } from '@nestjs/common';
+import { 
+  Controller, 
+  Get, 
+  Post, 
+  Body, 
+  Param, 
+  UseGuards, 
+  Req, 
+  UseInterceptors, 
+  UploadedFile, 
+  BadRequestException 
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { CommunitiesService } from './communities.service';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard'; // Ensure you have this import
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Controller('communities')
-@UseGuards(JwtAuthGuard) // Apply Auth Guard globally to this controller
+@UseGuards(JwtAuthGuard)
 export class CommunitiesController {
   constructor(private readonly communitiesService: CommunitiesService) {}
 
@@ -12,24 +24,34 @@ export class CommunitiesController {
     return this.communitiesService.getAllCommunities();
   }
 
-  // ==================================================
-  // NEW: GET SINGLE COMMUNITY DETAILS (WITH CREATOR)
-  // ==================================================
   @Get(':id')
   async getOne(@Param('id') id: string) {
     return this.communitiesService.findById(id);
   }
 
   @Post('create')
+  @UseInterceptors(FileInterceptor('file')) // Handles multipart/form-data file upload
   async create(
-    @Body() body: { name: string; minCoins: number }, 
+    @Body() body: { 
+      name: string; 
+      minCoins: number; 
+      description?: string 
+    }, 
+    @UploadedFile() file: Express.Multer.File, // Captures the uploaded file
     @Req() req: any
   ) {
-    // Secure: Force creatorId to be the logged-in user
+    // 1. Validate Name
+    if (!body.name || body.name.trim() === '') {
+      throw new BadRequestException('Community name is required');
+    }
+
+    // 2. Call Service (Passing description and file)
     return this.communitiesService.createCommunity(
       req.user.id, 
       body.name, 
-      body.minCoins
+      body.minCoins,
+      body.description,
+      file
     );
   }
 
@@ -38,7 +60,6 @@ export class CommunitiesController {
     @Body() body: { communityId: string }, 
     @Req() req: any
   ) {
-    // Secure: Use userId from token, not body
     return this.communitiesService.joinCommunity(
       body.communityId, 
       req.user.id
@@ -59,11 +80,10 @@ export class CommunitiesController {
     },
     @Req() req: any
   ) {
-    // Secure: Use authorId and authorName from token
     return this.communitiesService.createPost(
       body.communityId, 
       req.user.id,
-      req.user.username, // Ensure username is attached to your JWT payload
+      req.user.username,
       body.text, 
       body.voiceUrl
     );
