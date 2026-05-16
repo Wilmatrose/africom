@@ -34,25 +34,15 @@ export class GroupsController {
     return this.groupsService.findAll();
   }
 
+  // FIX: Static routes MUST come before dynamic routes (like ':id')
   @Get('joined')
   async getJoined(@Req() req: any) {
     return this.groupsService.findJoined(req.user.id);
   }
 
-  // NEW: Join Popular Groups by Name (Used on Home Page)
   @Post('join-by-name')
   async joinByName(@Req() req: any, @Body() body: { name: string }) {
     return this.groupsService.joinByName(req.user.id, body.name);
-  }
-
-  @Get(':id/details')
-  async getDetails(@Param('id') id: string, @Req() req: any) {
-    return this.groupsService.getGroupDetails(id, req.user.id);
-  }
-
-  @Get(':id')
-  async getOne(@Param('id') id: string) {
-    return this.groupsService.findById(id);
   }
 
   @Post('join')
@@ -61,6 +51,17 @@ export class GroupsController {
     @Req() req: any,
   ) {
     return this.groupsService.join(req.user.id, body.inviteLink);
+  }
+
+  // FIX: Dynamic route ':id' comes AFTER static routes
+  @Get(':id/details')
+  async getDetails(@Param('id') id: string, @Req() req: any) {
+    return this.groupsService.getGroupDetails(id, req.user.id);
+  }
+
+  @Get(':id')
+  async getOne(@Param('id') id: string) {
+    return this.groupsService.findById(id);
   }
 
   @Post()
@@ -89,7 +90,10 @@ export class GroupsController {
   ) {
     if (!body.name) throw new BadRequestException('Group name is required');
 
-    const fileUrl = file ? `http://localhost:3000/uploads/groups/${file.filename}` : undefined;
+    // FIX: Dynamic URL
+    const fileUrl = file 
+      ? `${req.protocol}://${req.get('host')}/uploads/groups/${file.filename}` 
+      : undefined;
 
     return this.groupsService.create(body.name, body.description || '', req.user.id, fileUrl);
   }
@@ -107,7 +111,10 @@ export class GroupsController {
     @UploadedFile() file: Express.Multer.File,
     @Req() req: any,
   ) {
-    const imageUrl = file ? `http://localhost:3000/uploads/groups/${file.filename}` : undefined;
+    // FIX: Dynamic URL
+    const imageUrl = file 
+      ? `${req.protocol}://${req.get('host')}/uploads/groups/${file.filename}` 
+      : undefined;
     
     const lockGroup = body.lockGroup === 'true';
     const disappearingTimer = body.disappearingTimer ? parseInt(body.disappearingTimer) : undefined;
@@ -154,7 +161,12 @@ export class GroupsController {
     @Req() req: any,
   ) {
     const content = body.content || '';
-    const imageUrl = file ? `http://localhost:3000/uploads/chat/${file.filename}` : undefined;
+    
+    // FIX: Dynamic URL
+    const imageUrl = file 
+      ? `${req.protocol}://${req.get('host')}/uploads/chat/${file.filename}` 
+      : undefined;
+      
     const replyToId = body.replyToId; 
 
     return this.groupsService.sendMessage(groupId, req.user.id, content, imageUrl, replyToId);
