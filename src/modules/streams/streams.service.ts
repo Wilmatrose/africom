@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, MoreThan } from 'typeorm'; // Added MoreThan
 import { LiveSession } from './streams.entity';
 
 @Injectable()
@@ -18,9 +18,6 @@ export class StreamsService {
       const urlObj = new URL(url);
       
       if (platform === 'YOUTUBE') {
-        // Extract Video ID from YouTube URL
-        // Supports: https://www.youtube.com/watch?v=VIDEO_ID
-        // Supports: https://youtu.be/VIDEO_ID
         let videoId = urlObj.searchParams.get('v');
         if (!videoId && urlObj.hostname === 'youtu.be') {
           videoId = urlObj.pathname.substring(1);
@@ -28,18 +25,13 @@ export class StreamsService {
         if (videoId) return { cleanId: videoId, valid: true };
       } 
       else if (platform === 'TIKTOK') {
-        // Extract Username from TikTok URL
-        // Supports: https://www.tiktok.com/@username/live
-        // Supports: https://www.tiktok.com/@username
         const pathParts = urlObj.pathname.split('/').filter(p => p);
         if (pathParts.length > 0 && pathParts[0].startsWith('@')) {
-          const username = pathParts[0].substring(1); // Remove @
+          const username = pathParts[0].substring(1);
           return { cleanId: username, valid: true };
         }
       }
       else if (platform === 'TWITCH') {
-        // Extract Channel Name from Twitch URL
-        // Supports: https://www.twitch.tv/username
         const pathParts = urlObj.pathname.split('/').filter(p => p);
         if (pathParts.length > 0) {
           return { cleanId: pathParts[0], valid: true };
@@ -53,14 +45,11 @@ export class StreamsService {
   }
 
   async startSession(creatorId: string, platform: string, streamUrl: string, title: string) {
-    
-    // 1. Validate Platform
     const upperPlatform = platform.toUpperCase() as 'YOUTUBE' | 'TWITCH' | 'TIKTOK';
     if (!['YOUTUBE', 'TWITCH', 'TIKTOK'].includes(upperPlatform)) {
-      throw new BadRequestException('Invalid platform selected. Choose YouTube, Twitch, or TikTok.');
+      throw new BadRequestException('Invalid platform selected.');
     }
 
-    // 2. Validate and Parse URL
     if (!streamUrl) {
         throw new BadRequestException('Stream URL is required.');
     }
@@ -69,36 +58,52 @@ export class StreamsService {
 
     if (!valid || !cleanId) {
       throw new BadRequestException(
-        `Invalid ${upperPlatform} URL format. Please paste the full link to your live stream.`
+        `Invalid ${upperPlatform} URL format. Please paste the full link.`
       );
     }
 
-    // 3. Create Session
     const session = this.sessionRepo.create({
       creatorId,
       platform: upperPlatform,
-      platformStreamId: cleanId, // Store the clean ID (video_id or username)
-      streamUrl: streamUrl,      // Store the original URL for reference
+      platformStreamId: cleanId,
+      streamUrl: streamUrl,
       title: title || 'Live Stream',
       isLive: true,
+      viewers: 0, // Explicitly start at 0
     });
 
     return this.sessionRepo.save(session);
   }
 
   async endSession(sessionId: string) {
-    return this.sessionRepo.update(sessionId, { isLive: false });
+    // Optionally reset viewers to 0 on end
+    return this.sessionRepo.update(sessionId, { isLive: false, viewers: 0 });
   }
 
-  /**
-   * Get currently active streams
-   * IMPROVED: Returns creator details dynamically
-   */
+  // === NEW VIEWER COUNTER METHODS ===
+
+  async incrementViewers(streamId: string) {
+    // Atomic increment: Adds 1 safely
+    await this.sessionRepo.increment({ id: streamId }, 'viewers', 1);
+    const stream = await this.sessionRepo.findOne({ where: { id: streamId } });
+    return stream ? stream.viewers : 0;
+  }
+
+  async decrementViewers(streamId: string) {
+    // Atomic decrement: Subtracts 1 safely
+    // Condition 'viewers > 0' prevents negative numbers
+    await this.sessionRepo.decrement({ id: streamId, viewers: MoreThan(0) }, 'viewers', 1);
+    
+    const stream = await this.sessionRepo.findOne({ where: { id: streamId } });
+    return stream ? stream.viewers : 0;
+  }
+
+  // ===================================
+
   async getActiveStreams() {
-    // We use queryBuilder to join the User table and get live profile data
     return this.sessionRepo
       .createQueryBuilder('session')
-      .leftJoinAndSelect('session.creator', 'creator') // Fetch the User relation
+      .leftJoinAndSelect('session.creator', 'creator')
       .where('session.isLive = :isLive', { isLive: true })
       .select([
         'session.id',
@@ -107,9 +112,10 @@ export class StreamsService {
         'session.streamUrl',
         'session.title',
         'session.startedAt',
-        'creator.id',    // Return real User ID
-        'creator.username', // Return real Username
-        'creator.avatarUrl' // Return real Avatar (ensure this column exists in User entity)
+        'session.viewers', // ADDED: Return viewer count
+        'creator.id',
+        'creator.username',
+        'creator.avatarUrl'
       ])
       .orderBy('session.startedAt', 'DESC')
       .getMany();

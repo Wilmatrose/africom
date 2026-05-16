@@ -29,6 +29,11 @@ export class LiveSession {
   @Column({ nullable: true })
   title: string;
 
+  // === NEW ADDITION FOR VIEWERS ===
+  @Column({ default: 0 })
+  viewers: number;
+  // ================================
+
   @CreateDateColumn()
   startedAt: Date;
 
