@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
-// Modules
+// Feature Modules
 import { UsersModule } from './modules/users/users.module';
 import { WalletModule } from './modules/wallet/wallet.module';
 import { PaymentsModule } from './modules/payments/payments.module';
@@ -13,7 +13,7 @@ import { CommunitiesModule } from './modules/communities/communities.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { GroupsModule } from './modules/groups/groups.module';
-import { NotificationsModule } from './modules/notifications/notifications.module'; // NEW
+import { NotificationsModule } from './modules/notifications/notifications.module';
 import { MessagingModule } from './modules/messaging/messaging.module';
 
 @Module({
@@ -23,21 +23,23 @@ import { MessagingModule } from './modules/messaging/messaging.module';
       envFilePath: '.env',
     }),
 
-    // ONLY ONE DATABASE CONNECTION
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         type: 'postgres',
-        host: config.get('DB_HOST') ?? 'localhost',
-        port: Number(config.get('DB_PORT')) ?? 5432,
-        username: config.get('DB_USER') ?? 'postgres',
-        password: config.get('DB_PASSWORD') ?? 'root',
-        database: config.get('DB_NAME') ?? 'africom_db',
+        
+        // ✅ FIX: Use the DATABASE_URL variable you set in Render
+        url: config.get<string>('DATABASE_URL'), 
+        
+        // Required for Render PostgreSQL
+        ssl: {
+          rejectUnauthorized: false,
+        },
 
-        autoLoadEntities: true, // IMPORTANT (Automatically loads Notification entity)
-        synchronize: false,
-        logging: true,
+        autoLoadEntities: true,
+        synchronize: false, 
+        logging: process.env.NODE_ENV !== 'production',
       }),
     }),
 
@@ -52,7 +54,7 @@ import { MessagingModule } from './modules/messaging/messaging.module';
     CommunitiesModule,
     GroupsModule,
     NotificationsModule,
-    MessagingModule, // NEW
+    MessagingModule,
   ],
 })
 export class AppModule {}
