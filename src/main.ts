@@ -7,45 +7,58 @@ import { Request, Response, NextFunction } from 'express';
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
-  // --- CRITICAL MIDDLEWARE FOR PAYMENT SECURITY ---
-  // NestJS parses JSON automatically, which destroys the original string formatting.
-  // We need to capture the raw body string to verify KoraPay's signature hash.
+  // --- IMPROVED RAW BODY MIDDLEWARE ---
+  // We verify the content-type header explicitly to avoid messing up other requests.
   app.use((req: Request, res: Response, next: NextFunction) => {
-    // Only apply to JSON content types to avoid messing with file uploads
-    if (req.is('application/json')) {
+    // Only intercept if it's a JSON request and NOT a file upload
+    const contentType = req.headers['content-type'];
+    
+    if (contentType && contentType.includes('application/json')) {
       let data = '';
+      
+      // Set encoding to utf8 explicitly
       req.setEncoding('utf8');
+      
       req.on('data', (chunk) => {
         data += chunk;
       });
+      
       req.on('end', () => {
-        (req as any).rawBody = data; // Attach raw body to request object
+        // Attach raw body to the request object
+        (req as any).rawBody = data;
+        
+        // CRITICAL FIX: Manually parse JSON and set it back to req.body
+        // This prevents the "stream encoding should not be set" error
+        try {
+          if (data) {
+            req.body = JSON.parse(data);
+          }
+        } catch (e) {
+          // If parsing fails, let the default parser handle it or fail naturally
+        }
+        
         next();
       });
     } else {
+      // For non-JSON requests (like form-data or text), skip this logic
       next();
     }
   });
-  // -------------------------------------------------
+  // ------------------------------------------
 
-  // Serve static files from the 'uploads' folder
   app.useStaticAssets(join(__dirname, '..', 'uploads'), {
     prefix: '/uploads/',
   });
 
-  // Trust proxy (Important if behind Render/Heroku/AWS load balancer)
   app.set('trust proxy', true);
-
-  // Set Global Prefix (All routes will be /api/...)
   app.setGlobalPrefix('api');
 
   app.enableCors({
-    // Allow your frontend origins
     origin: [
       'https://africom-social.web.app', 
       'http://localhost:3000',
-      'capacitor://localhost', // For iOS/Android app
-      'http://localhost' // For Web testing
+      'capacitor://localhost',
+      'http://localhost'
     ],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     credentials: true,
