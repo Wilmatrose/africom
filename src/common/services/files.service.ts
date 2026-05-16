@@ -1,7 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { v2 as cloudinary } from 'cloudinary';
-// FIX 1: Import Multer types to resolve 'Express' namespace errors
-import 'multer'; 
 
 @Injectable()
 export class FilesService {
@@ -18,19 +16,14 @@ export class FilesService {
     return new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         {
-          resource_type: 'image',
-          folder: 'africom_uploads',
+          resource_type: 'image', // Ensure we only upload images
+          folder: 'africom_uploads', // Optional: Organize files in a folder
         },
         (error, result) => {
           if (error) {
             return reject(error);
           }
-          
-          // FIX 2: Check if result exists before accessing secure_url
-          if (!result) {
-             return reject(new Error('Upload failed: No result returned from Cloudinary'));
-          }
-
+          // Return the secure URL provided by Cloudinary
           resolve(result.secure_url);
         },
       );

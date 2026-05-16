@@ -17,6 +17,11 @@ import { GroupsModule } from './modules/groups/groups.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { MessagingModule } from './modules/messaging/messaging.module';
 
+// ==================================================
+// NEW: Import CommonModule for File Uploads (Cloudinary)
+// ==================================================
+import { CommonModule } from './common/common.module';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -46,6 +51,11 @@ import { MessagingModule } from './modules/messaging/messaging.module';
         logging: process.env.NODE_ENV !== 'production',
       }),
     }),
+
+    // ==================================================
+    // ADDED: CommonModule
+    // ==================================================
+    CommonModule,
 
     UsersModule,
     WalletModule,
