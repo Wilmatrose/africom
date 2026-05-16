@@ -6,14 +6,16 @@ import {
   OnGatewayConnection,
   OnGatewayDisconnect,
   ConnectedSocket,
+  OnGatewayInit,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
-import { Injectable, UseGuards, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { OnEvent } from '@nestjs/event-emitter'; // ADDED: To listen for events
 import { WalletService } from '../modules/wallet/wallet.service';
 import { UsersService } from '../modules/users/users/users.service';
 
-// --- DTOs for Validation (Inline for now, or move to dto file) ---
+// --- DTOs for Validation ---
 class JoinStreamPayload {
   sessionId: string;
 }
@@ -31,18 +33,20 @@ class SendGiftPayload {
   sessionId: string;
   giftName: string;
   cost: number;
-  recipientUsername: string; // CRITICAL: Added to find the recipient
+  recipientUsername: string;
 }
 
 @WebSocketGateway({
   cors: {
-    origin: '*', // Adjust this to your Flutter URL in production
+    origin: '*', 
   },
 })
-@Injectable() // Added Injectable so we can inject other services
+@Injectable()
 export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
+
+  private readonly logger = new Logger(WebsocketsGateway.name);
 
   // Store socket ID -> User ID mapping
   private connectedUsers: Map<string, { userId: string; username: string }> = new Map();
@@ -53,73 +57,65 @@ export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconne
     private readonly usersService: UsersService,
   ) {}
 
+  // --- CONNECTION HANDLERS ---
+
   async handleConnection(client: Socket) {
     try {
-      // 1. Get Token from Handshake Auth
       const token = client.handshake.auth.token;
 
       if (!token) {
-        console.log(`❌ Connection rejected: No token provided for ${client.id}`);
+        this.logger.error(`❌ Connection rejected: No token provided for ${client.id}`);
         client.disconnect();
         return;
       }
 
-      // 2. Verify Token
-      const payload = this.jwtService.verify(token); // Ensure secret matches JWT_MODULE_CONFIG
+      const payload = this.jwtService.verify(token);
       const userId = payload.sub;
-      const username = payload.username; // Ensure your JWT payload includes username
+      const username = payload.username; 
 
-      // 3. Fetch User to be safe (optional, but good for freshness)
       const user = await this.usersService.findById(userId);
       
-      // 4. Store Mapping
       this.connectedUsers.set(client.id, { userId: user.id, username: user.username });
       
-      // 5. Join Personal Room (For direct notifications like Wallet Updates)
+      // Join Personal Room
       client.join(`user_${user.id}`);
 
-      console.log(`✅ Client connected: ${client.id} | User: ${user.username}`);
+      this.logger.log(`✅ Client connected: ${client.id} | User: ${user.username}`);
     } catch (error) {
-      console.log(`❌ Connection rejected: Invalid token for ${client.id}`);
+      this.logger.error(`❌ Connection rejected: Invalid token for ${client.id}`);
       client.disconnect();
     }
   }
 
   handleDisconnect(client: Socket) {
-    // Clean up mapping
     this.connectedUsers.delete(client.id);
-    console.log(`❌ Client disconnected: ${client.id}`);
+    this.logger.log(`❌ Client disconnected: ${client.id}`);
   }
 
-  // 1. JOIN STREAM
+  // --- SOCKET EVENTS (Sent from Flutter) ---
+
   @SubscribeMessage('join_stream')
   handleJoinStream(@MessageBody() payload: JoinStreamPayload, @ConnectedSocket() client: Socket) {
     client.join(`session_${payload.sessionId}`);
-    console.log(`User joined stream: ${payload.sessionId}`);
+    this.logger.log(`User joined stream: ${payload.sessionId}`);
   }
 
-  // 2. LEAVE STREAM
   @SubscribeMessage('leave_stream')
   handleLeaveStream(@MessageBody() payload: JoinStreamPayload, @ConnectedSocket() client: Socket) {
     client.leave(`session_${payload.sessionId}`);
-    console.log(`User left stream: ${payload.sessionId}`);
+    this.logger.log(`User left stream: ${payload.sessionId}`);
   }
 
-  // 3. JOIN GROUP
   @SubscribeMessage('joinGroup')
   handleJoinGroup(@MessageBody() payload: JoinGroupPayload, @ConnectedSocket() client: Socket) {
     client.join(`group_${payload.groupId}`);
   }
 
-  // 4. SEND MESSAGE (Chat)
-  @SubscribeMessage('stream:message') // Updated event name to match Flutter
+  @SubscribeMessage('stream:message')
   handleSendMessage(@MessageBody() payload: SendMessagePayload, @ConnectedSocket() client: Socket) {
     const sender = this.connectedUsers.get(client.id);
+    if (!sender || !payload.message || payload.message.trim() === '') return;
 
-    if (!sender) return;
-    if (!payload.message || payload.message.trim() === '') return;
-
-    // Broadcast to the specific stream/session room
     this.server.to(`session_${payload.groupId}`).emit('stream:message', {
       username: sender.username,
       message: payload.message,
@@ -127,8 +123,7 @@ export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconne
     });
   }
 
-  // 5. SEND GIFT (THE BIG ONE)
-  @SubscribeMessage('stream:gift') // Updated event name to match Flutter
+  @SubscribeMessage('stream:gift')
   async handleSendGift(@MessageBody() payload: SendGiftPayload, @ConnectedSocket() client: Socket) {
     const sender = this.connectedUsers.get(client.id);
 
@@ -138,14 +133,12 @@ export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconne
     }
 
     try {
-      // A. Find Recipient
       const recipient = await this.usersService.findByUsername(payload.recipientUsername);
       if (!recipient) {
         client.emit('error', { message: 'Recipient not found' });
         return;
       }
 
-      // B. Check Self-Gifting
       if (sender.userId === recipient.id) {
         client.emit('error', { message: 'You cannot send gifts to yourself' });
         return;
@@ -153,7 +146,6 @@ export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconne
 
       const ref = `gift-${Date.now()}`;
 
-      // C. Debit Sender (This checks balance and throws if insufficient)
       await this.walletService.debitFan(
         sender.userId, 
         payload.cost, 
@@ -161,7 +153,6 @@ export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconne
         payload.giftName
       );
 
-      // D. Credit Creator
       await this.walletService.creditCreator(
         recipient.id, 
         payload.cost, 
@@ -169,7 +160,6 @@ export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconne
         payload.giftName
       );
 
-      // E. Notify Recipient (Personal Notification)
       this.server.to(`user_${recipient.id}`).emit('onCreatorAlert', {
         type: 'GIFT',
         sender: sender.username,
@@ -177,7 +167,6 @@ export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconne
         amount: payload.cost,
       });
 
-      // F. Broadcast to Stream Room (Visual Animation for everyone watching)
       this.server.to(`session_${payload.sessionId}`).emit('onGiftReceived', {
         message: `${sender.username} sent ${payload.giftName}!`,
         sender: sender.username,
@@ -185,14 +174,56 @@ export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconne
         amount: payload.cost,
       });
 
-      console.log(`✅ Gift sent from ${sender.username} to ${recipient.username}`);
+      this.logger.log(`✅ Gift sent from ${sender.username} to ${recipient.username}`);
 
     } catch (error) {
-      console.error('Gift Error:', error);
-      // Send error back to sender so UI can show "Insufficient Funds"
+      this.logger.error('Gift Error:', error);
       client.emit('error', { 
         message: error instanceof BadRequestException ? error.message : 'Gift failed' 
       });
     }
+  }
+
+  // --- INTERNAL EVENT LISTENERS (From WalletController) ---
+
+  /**
+   * Listens for 'gift.sent' event emitted by WalletController
+   * This handles gifts sent via HTTP endpoints (if any) 
+   * or ensures synchronization if logic was executed elsewhere.
+   */
+  @OnEvent('gift.sent')
+  handleInternalGiftSent(payload: any) {
+    this.logger.log(`Received internal gift event: ${JSON.stringify(payload)}`);
+    
+    // Notify Recipient
+    this.server.to(`user_${payload.recipientId}`).emit('onCreatorAlert', {
+      type: 'GIFT',
+      sender: payload.senderName,
+      gift: payload.gift,
+      amount: payload.amount,
+    });
+
+    // Broadcast to Stream Room
+    if (payload.streamId) {
+      this.server.to(`session_${payload.streamId}`).emit('onGiftReceived', {
+        message: `${payload.senderName} sent ${payload.gift}!`,
+        sender: payload.senderName,
+        giftName: payload.gift,
+        amount: payload.amount,
+      });
+    }
+  }
+
+  /**
+   * Listens for 'wallet.withdrawal.created' event emitted by WalletController
+   * Notifies the user that their withdrawal request was received.
+   */
+  @OnEvent('wallet.withdrawal.created')
+  handleInternalWithdrawal(payload: any) {
+    this.logger.log(`Received internal withdrawal event for user: ${payload.userId}`);
+    
+    this.server.to(`user_${payload.userId}`).emit('onNotification', {
+      message: payload.message,
+    });
   }
 }

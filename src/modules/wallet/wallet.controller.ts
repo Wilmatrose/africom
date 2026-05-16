@@ -12,10 +12,8 @@ import {
 } from '@nestjs/common';
 import { WalletService } from './wallet.service';
 import { UsersService } from '../users/users/users.service';
-import { WebsocketsGateway } from '../websockets/websockets.gateway';
-// Import TransactionCategory if needed for specific checks, 
-// though the service handles most logic now.
-import { TransactionCategory } from './wallet.entity'; 
+// REMOVED: WebsocketsGateway import to fix circular dependency
+import { EventEmitter2 } from '@nestjs/event-emitter'; // ADDED: Event Emitter
 import { AuthGuard } from '@nestjs/passport';
 
 @Controller('wallet')
@@ -26,7 +24,8 @@ export class WalletController {
   constructor(
     private readonly walletService: WalletService,
     private readonly usersService: UsersService,
-    private readonly websocketsGateway: WebsocketsGateway,
+    // CHANGED: Injecting EventEmitter2 instead of WebsocketsGateway
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   // =========================
@@ -39,7 +38,7 @@ export class WalletController {
     
     return {
       balance: user.coinBalance,
-      currency: 'Coins', // Changed to 'Coins' as balance is not raw Naira
+      currency: 'Coins',
     };
   }
 
@@ -64,7 +63,7 @@ export class WalletController {
     @Body() body: { recipientUsername: string; amount: number; sessionId?: string },
   ) {
     const senderId = req.user.id;
-    const senderName = req.user.username || req.user.fullName; // Get name from Token
+    const senderName = req.user.username || req.user.fullName; 
 
     // 1. Find Recipient by Username
     const recipient = await this.usersService.findByUsername(body.recipientUsername);
@@ -84,24 +83,14 @@ export class WalletController {
     await this.walletService.debitFan(senderId, body.amount, ref, giftName);
     await this.walletService.creditCreator(recipient.id, body.amount, ref, giftName);
 
-    // 4. Notify Recipient via WebSocket
-    this.websocketsGateway.server
-      .to(`user_${recipient.id}`)
-      .emit('onCreatorAlert', {
-        type: 'GIFT',
-        sender: senderName,
-        gift: giftName,
-        amount: body.amount,
-      });
-
-    // 5. Optional: Notify Live Session if provided
-    if (body.sessionId) {
-      this.websocketsGateway.server
-        .to(`session_${body.sessionId}`)
-        .emit('onGiftReceived', {
-          message: `${senderName} sent ${giftName}!`,
-        });
-    }
+    // 4. Emit Event for Websockets Gateway to handle
+    this.eventEmitter.emit('gift.sent', {
+      recipientId: recipient.id,
+      streamId: body.sessionId,
+      senderName: senderName,
+      gift: giftName,
+      amount: body.amount,
+    });
 
     return { success: true, message: `Gift sent to ${body.recipientUsername}` };
   }
@@ -122,11 +111,11 @@ export class WalletController {
       body.bankDetails,
     );
 
-    this.websocketsGateway.server
-      .to(`user_${userId}`)
-      .emit('onNotification', {
-        message: 'Withdrawal request submitted.',
-      });
+    // Emit Event for Websockets Gateway to handle
+    this.eventEmitter.emit('wallet.withdrawal.created', {
+      userId: userId,
+      message: 'Withdrawal request submitted.',
+    });
 
     return result;
   }

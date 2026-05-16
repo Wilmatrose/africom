@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
@@ -58,6 +59,7 @@ import { MessagingModule } from './modules/messaging/messaging.module';
     GroupsModule,
     NotificationsModule,
     MessagingModule,
+    EventEmitterModule.forRoot()
   ],
 })
 export class AppModule {}

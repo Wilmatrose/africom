@@ -3,25 +3,19 @@
   "version": "1.0.0",
   "description": "NestJS backend for Africom Socials",
   "main": "dist/main.js",
-
   "engines": {
     "node": "20.x"
   },
-
   "scripts": {
     "build": "node node_modules/@nestjs/cli/bin/nest.js build",
-
     "start": "node dist/main",
     "start:dev": "node node_modules/@nestjs/cli/bin/nest.js start --watch",
     "start:prod": "node dist/main",
-
     "migration:generate": "npm run typeorm -- migration:generate src/migrations/AutoMigration",
     "migration:run": "npm run typeorm -- migration:run",
     "migration:revert": "npm run typeorm -- migration:revert",
-
     "typeorm": "typeorm-ts-node-commonjs -d src/data-source.ts"
   },
-
   "dependencies": {
     "@nestjs/common": "^10.0.0",
     "@nestjs/config": "^3.0.0",
@@ -49,7 +43,6 @@
     "typeorm": "^0.3.29",
     "uuid": "^14.0.0"
   },
-
   "devDependencies": {
     "@nestjs/cli": "^10.4.9",
     "@nestjs/schematics": "^10.0.0",

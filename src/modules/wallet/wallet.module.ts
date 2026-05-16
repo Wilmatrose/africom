@@ -1,7 +1,8 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { EventEmitterModule } from '@nestjs/event-emitter'; // ADDED: Required for Event Emitter
 
-// FIXED: Static import at the top of the file
+// Static import at the top of the file
 import { UsersModule } from '../users/users.module';
 
 import { WalletService } from './wallet.service';
@@ -17,8 +18,11 @@ import { TransactionService } from './transaction.service';
     // 1. Register Transaction Entity
     TypeOrmModule.forFeature([Transaction]),
     
-    // 2. Import UsersModule (Using the class, not the dynamic import function)
-    UsersModule, 
+    // 2. Import UsersModule
+    UsersModule,
+
+    // 3. Import EventEmitterModule (Global access usually preferred, but local works too)
+    EventEmitterModule, 
   ],
   controllers: [WalletController],
   providers: [
