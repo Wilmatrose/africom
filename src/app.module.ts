@@ -29,7 +29,7 @@ import { MessagingModule } from './modules/messaging/messaging.module';
       useFactory: (config: ConfigService) => ({
         type: 'postgres',
         
-        // ✅ FIX: Use the DATABASE_URL variable you set in Render
+        // Connects using the URL from Render Environment Variables
         url: config.get<string>('DATABASE_URL'), 
         
         // Required for Render PostgreSQL
@@ -38,7 +38,10 @@ import { MessagingModule } from './modules/messaging/messaging.module';
         },
 
         autoLoadEntities: true,
-        synchronize: false, 
+        
+        // ✅ ENABLED: This creates the database tables automatically
+        synchronize: true, 
+        
         logging: process.env.NODE_ENV !== 'production',
       }),
     }),
