@@ -7,8 +7,8 @@ import {
   UseGuards, 
   Req, 
   UseInterceptors, 
-  UploadedFile, 
-  BadRequestException 
+  UploadedFile,
+  Patch // Added for future updates
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CommunitiesService } from './communities.service';
@@ -29,29 +29,27 @@ export class CommunitiesController {
     return this.communitiesService.findById(id);
   }
 
+  // =========================
+  // CREATE COMMUNITY
+  // =========================
   @Post('create')
-  @UseInterceptors(FileInterceptor('file')) // Handles multipart/form-data file upload
+  @UseInterceptors(FileInterceptor('file')) 
   async create(
+    @UploadedFile() file: Express.Multer.File,
     @Body() body: { 
       name: string; 
       minCoins: number; 
       description?: string 
     }, 
-    @UploadedFile() file: Express.Multer.File, // Captures the uploaded file
     @Req() req: any
   ) {
-    // 1. Validate Name
-    if (!body.name || body.name.trim() === '') {
-      throw new BadRequestException('Community name is required');
-    }
-
-    // 2. Call Service (Passing description and file)
+    // Validation moved to Service
     return this.communitiesService.createCommunity(
       req.user.id, 
       body.name, 
       body.minCoins,
       body.description,
-      file
+      file // Pass the file for Cloudinary upload
     );
   }
 

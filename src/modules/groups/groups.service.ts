@@ -1,11 +1,12 @@
 import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, ILike } from 'typeorm'; // Added ILike
+import { Repository, DataSource, ILike } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Group } from './entities/group.entity';
 import { GroupMember, GroupMemberRole } from './entities/group-member.entity';
 import { GroupMessage } from './entities/group-message.entity';
 import { Notification } from '../notifications/notification.entity';
+import { FilesService } from '../../common/services/files.service'; // IMPORT CLOUDINARY SERVICE
 import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
@@ -17,6 +18,7 @@ export class GroupsService {
     @InjectRepository(Notification) private readonly notifRepo: Repository<Notification>,
     private dataSource: DataSource,
     private readonly eventEmitter: EventEmitter2,
+    private readonly filesService: FilesService, // INJECT CLOUDINARY SERVICE
   ) {}
 
   // =========================
@@ -33,15 +35,25 @@ export class GroupsService {
   }
 
   // =========================
-  // CREATE
+  // CREATE (WITH CLOUDINARY UPLOAD)
   // =========================
-  async create(name: string, description: string, creatorId: string, fileUrl?: string) {
+  async create(name: string, description: string, creatorId: string, file?: Express.Multer.File) {
+    let fileUrl: string | undefined;
+
+    // ✅ FIX: Upload to Cloudinary if file exists
+    if (file) {
+      fileUrl = await this.filesService.uploadImage(file);
+    }
+
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
     try {
       const group = this.groupRepo.create({
-        name, description, creatorId, imageUrl: fileUrl,
+        name, 
+        description, 
+        creatorId, 
+        imageUrl: fileUrl, // Save Cloudinary URL
         inviteLink: uuidv4().split('-')[0],
       });
       const savedGroup = await queryRunner.manager.save(group);
@@ -63,10 +75,9 @@ export class GroupsService {
   }
 
   // =========================
-  // JOIN BY NAME (NEW METHOD)
+  // JOIN BY NAME
   // =========================
   async joinByName(userId: string, groupName: string) {
-    // 1. Find the group by name (Case insensitive search)
     const group = await this.groupRepo.findOne({ 
       where: { name: ILike(groupName) } 
     });
@@ -75,17 +86,14 @@ export class GroupsService {
       throw new NotFoundException(`Group '${groupName}' not found.`);
     }
 
-    // 2. Check if already a member
     const existingMember = await this.memberRepo.findOne({ 
       where: { groupId: group.id, userId } 
     });
     
     if (existingMember) {
-      // User is already a member, just return the group to navigate them there
       return group;
     }
 
-    // 3. Join the group
     const newMember = this.memberRepo.create({ 
       groupId: group.id, 
       userId, 
@@ -93,7 +101,6 @@ export class GroupsService {
     });
     await this.memberRepo.save(newMember);
 
-    // 4. Emit event (optional)
     this.eventEmitter.emit('group_joined', { group, userId });
 
     return group;
@@ -113,7 +120,7 @@ export class GroupsService {
   }
   
   // =========================
-  // FIND ALL (SECURE)
+  // FIND ALL
   // =========================
   async findAll() { 
     const groups = await this.groupRepo.find({ 
@@ -193,9 +200,14 @@ export class GroupsService {
     const group = await this.findById(groupId);
     if (!group) throw new NotFoundException('Group not found');
 
+    // ✅ FIX: Handle Image Upload
+    if (updates.file) {
+      group.imageUrl = await this.filesService.uploadImage(updates.file);
+    }
+
     if (updates.name) group.name = updates.name;
     if (updates.description !== undefined) group.description = updates.description;
-    if (updates.imageUrl) group.imageUrl = updates.imageUrl;
+    // Note: file property is handled above, ignored here if passed in updates object
     if (updates.lockGroup !== undefined) (group as any).lockGroup = updates.lockGroup;
     if (updates.disappearingTimer !== undefined) (group as any).disappearingTimer = updates.disappearingTimer;
 
@@ -216,18 +228,25 @@ export class GroupsService {
   }
 
   // =========================
-  // CHAT SYSTEM
+  // CHAT SYSTEM (WITH CLOUDINARY)
   // =========================
 
-  async sendMessage(groupId: string, senderId: string, content: string, imageUrl?: string, replyToId?: string) {
+  async sendMessage(groupId: string, senderId: string, content: string, file?: Express.Multer.File, replyToId?: string) {
     const member = await this.memberRepo.findOne({ where: { groupId, userId: senderId } });
     if (!member) throw new ForbiddenException('Not a member');
+    
+    let imageUrl: string | undefined;
+
+    // ✅ FIX: Upload chat image to Cloudinary
+    if (file) {
+      imageUrl = await this.filesService.uploadImage(file);
+    }
     
     const message = this.messageRepo.create({ 
       groupId, 
       senderId, 
       content, 
-      imageUrl,
+      imageUrl, // Save Cloudinary URL
       replyToId: replyToId || null
     });
     

@@ -5,6 +5,7 @@ import { Message } from '../entities/message.entity';
 import { User } from '../users/entities/user.entity';
 import { Notification } from '../notifications/notification.entity';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { FilesService } from '../../common/services/files.service'; // IMPORT CLOUDINARY SERVICE
 
 @Injectable()
 export class MessagingService {
@@ -13,6 +14,7 @@ export class MessagingService {
     @InjectRepository(User) private userRepo: Repository<User>,
     @InjectRepository(Notification) private notifRepo: Repository<Notification>,
     private eventEmitter: EventEmitter2,
+    private readonly filesService: FilesService, // INJECT CLOUDINARY SERVICE
   ) {}
 
   // =========================
@@ -20,7 +22,6 @@ export class MessagingService {
   // =========================
 
   async getInbox(userId: string) {
-    // 1. Accepted Conversations
     const conversations = await this.msgRepo.find({
       where: [
         { senderId: userId, isAccepted: true },
@@ -30,7 +31,6 @@ export class MessagingService {
       relations: ['sender', 'receiver'],
     });
 
-    // 2. Message Requests
     const requests = await this.msgRepo.find({
       where: { receiverId: userId, isRequest: true, isAccepted: false },
       order: { createdAt: 'DESC' },
@@ -57,10 +57,15 @@ export class MessagingService {
   }
 
   // =========================
-  // SENDING & ACCEPTING
+  // SENDING & ACCEPTING (UPDATED)
   // =========================
 
-  async sendMessage(senderId: string, receiverId: string, content: string, imageUrl?: string) {
+  async sendMessage(
+    senderId: string, 
+    receiverId: string, 
+    content: string, 
+    file?: Express.Multer.File // CHANGED: Accept File instead of URL string
+  ) {
     const sender = await this.userRepo.findOne({ 
         where: { id: senderId }, 
         relations: ['following', 'followers'] 
@@ -69,14 +74,18 @@ export class MessagingService {
 
     if (!receiver) throw new NotFoundException('User not found');
 
-    // Rule: Must follow to message
     const isFollowing = sender.following.some(u => u.id === receiverId);
     if (!isFollowing) {
       throw new ForbiddenException('You must follow this user to send a message');
     }
 
-    // Check if Mutual Follow
     const isMutual = sender.followers.some(u => u.id === receiverId);
+
+    // ✅ FIX: Upload Image to Cloudinary if file exists
+    let imageUrl: string | undefined;
+    if (file) {
+      imageUrl = await this.filesService.uploadImage(file);
+    }
 
     const message = this.msgRepo.create({
       sender,
@@ -84,7 +93,7 @@ export class MessagingService {
       senderId,
       receiverId,
       content,
-      imageUrl,
+      imageUrl, // Save Cloudinary URL
       isRequest: !isMutual,
       isAccepted: isMutual,
     });
@@ -123,16 +132,14 @@ export class MessagingService {
       where: {
         receiverId: userId,
         isRead: false,
-        isAccepted: true // Only count accepted conversations
+        isAccepted: true
       }
     });
 
     return { count };
   }
 
-  // FIX: Renamed to match the Controller call
   async markAsRead(currentUserId: string, senderId: string) {
-    // Update all unread messages FROM senderId TO currentUserId
     await this.msgRepo.update(
       { 
         receiverId: currentUserId, 

@@ -7,6 +7,7 @@ import {
   ManyToMany,
   JoinTable,
 } from 'typeorm';
+import { Exclude } from 'class-transformer'; // IMPORT THIS
 
 // =========================
 // USER ROLE
@@ -39,8 +40,18 @@ export class User {
   @Column({ unique: true })
   email!: string;
 
+  // =========================
+  // SECURITY FIX
+  // =========================
+  // We use @Exclude() so this field is NEVER sent to the frontend
+  // even if it exists in the database object.
+  @Exclude() 
   @Column({ name: 'password_hash' })
   passwordHash!: string;
+
+  @Exclude()
+  @Column({ name: 'last_login_ip', type: 'varchar', nullable: true })
+  lastLoginIp!: string | null;
 
   @Column({
     type: 'enum',
@@ -53,23 +64,25 @@ export class User {
   // PROFILE DETAILS
   // =========================
   
+  // FIX: Ensure TypeScript knows this can be null
+  // This field should hold the FULL Cloudinary URL
   @Column({ name: 'avatar_url', nullable: true })
-  avatarUrl!: string;
+  avatarUrl!: string | null;
 
   @Column({ type: 'text', nullable: true })
-  bio!: string;
+  bio!: string | null;
 
   // =========================
   // KYC
   // =========================
   @Column({ nullable: true })
-  fullName!: string;
+  fullName!: string | null;
 
   @Column({ name: 'id_card_url', nullable: true })
-  idCardUrl!: string;
+  idCardUrl!: string | null;
 
   @Column({ name: 'verification_video_url', nullable: true })
-  verificationVideoUrl!: string;
+  verificationVideoUrl!: string | null;
 
   @Column({
     type: 'enum',
@@ -90,6 +103,9 @@ export class User {
   // =========================
   // RELATIONSHIPS
   // =========================
+  // Note: Loading relationships (followers/following) automatically 
+  // can cause performance issues (N+1 queries). 
+  // Ideally, keep these lazy or handle them in DTOs.
   @ManyToMany(() => User, (user) => user.following)
   followers!: User[];
 
@@ -104,15 +120,8 @@ export class User {
   // =========================
   // WALLET
   // =========================
-  // Changed to 'int' because we are dealing with whole Coins (100, 500, 1000)
   @Column({ name: 'coin_balance', type: 'int', default: 0 })
   coinBalance!: number;
-
-  // =========================
-  // TRACKING
-  // =========================
-  @Column({ name: 'last_login_ip', type: 'varchar', nullable: true })
-  lastLoginIp!: string | null;
 
   // =========================
   // DATES

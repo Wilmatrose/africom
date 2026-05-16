@@ -7,7 +7,10 @@ import {
   Param,
   UseGuards,
   Req,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { MessagingService } from './messaging.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
@@ -17,7 +20,7 @@ export class MessagingController {
   constructor(private readonly messagingService: MessagingService) {}
 
   // =========================
-  // STATIC ROUTES FIRST (CRITICAL FOR ROUTING)
+  // STATIC ROUTES FIRST
   // =========================
 
   @Get('inbox')
@@ -25,21 +28,27 @@ export class MessagingController {
     return this.messagingService.getInbox(req.user.id);
   }
 
-  @Get('unread-count') // ✅ Correct Position
+  @Get('unread-count')
   async getUnreadCount(@Req() req: any) {
     return this.messagingService.getUnreadCount(req.user.id);
   }
 
+  // =========================
+  // SEND MESSAGE (With Image Upload)
+  // =========================
+
   @Post('send')
+  @UseInterceptors(FileInterceptor('file')) // Uses Memory Storage from CommonModule
   async sendMessage(
-    @Body() body: { receiverId: string; content: string; imageUrl?: string },
     @Req() req: any,
+    @Body() body: { receiverId: string; content: string }, // Removed imageUrl from Body
+    @UploadedFile() file: Express.Multer.File, // Added File parameter
   ) {
     return this.messagingService.sendMessage(
       req.user.id,
       body.receiverId,
       body.content,
-      body.imageUrl,
+      file // Pass the file to the service
     );
   }
 
@@ -50,7 +59,6 @@ export class MessagingController {
 
   @Patch('read/:senderId')
   async markRead(@Param('senderId') senderId: string, @Req() req: any) {
-    // Make sure you implemented the method in messaging.service.ts as shown above
     return this.messagingService.markAsRead(req.user.id, senderId);
   }
 
@@ -58,7 +66,7 @@ export class MessagingController {
   // DYNAMIC ROUTE LAST
   // =========================
 
-  @Get(':userId') // ✅ Must be at the bottom
+  @Get(':userId')
   async getMessages(@Param('userId') userId: string, @Req() req: any) {
     return this.messagingService.getMessages(req.user.id, userId);
   }

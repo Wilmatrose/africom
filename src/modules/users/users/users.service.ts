@@ -7,12 +7,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import { User, UserRole, KYCStatus } from '../entities/user.entity';
+import { FilesService } from '../../../../src/common/services/files.service'; // IMPORT CLOUDINARY SERVICE
 
 @Injectable()
 export class UsersService {
   constructor(
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    private readonly filesService: FilesService, // INJECT CLOUDINARY SERVICE
   ) {}
 
   // =========================
@@ -64,13 +66,7 @@ export class UsersService {
   // PUBLIC PROFILE & PRIVACY
   // =========================
 
-  /**
-   * Smart Profile Fetching.
-   * - Owner: Returns full data.
-   * - Public: Returns sanitized data (no coins, no email).
-   */
   async getPublicProfile(targetId: string, requesterId?: string) {
-    // We load relations to check follow status and counts
     const user = await this.userRepo.findOne({
       where: { id: targetId },
       relations: ['followers', 'following'], 
@@ -80,40 +76,32 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
-    // 1. If viewing own profile, return everything (sensitive data included)
     if (requesterId && requesterId === targetId) {
-      // Remove password hash before sending to frontend
       delete user.passwordHash;
       return {
         ...user,
         isOwner: true,
-        isFollowing: false, // N/A for self
+        isFollowing: false,
         followersCount: user.followers?.length || 0,
         followingCount: user.following?.length || 0,
       };
     }
 
-    // 2. If viewing someone else (Public View)
-    // Check if requester follows this user
     const isFollowing = requesterId
       ? user.followers?.some((f) => f.id === requesterId)
       : false;
 
-    // Return only public fields
     return {
       id: user.id,
       username: user.username,
       avatarUrl: user.avatarUrl,
-      bio: user.bio || null, // Assuming a bio field exists or will exist
+      bio: user.bio || null,
       role: user.role,
       createdAt: user.createdAt,
-      // Stats
       followersCount: user.followers?.length || 0,
       followingCount: user.following?.length || 0,
-      // State for Frontend
       isFollowing: !!isFollowing,
       isOwner: false,
-      // Explicitly EXCLUDED: coinBalance, email, kycStatus, passwordHash, etc.
     };
   }
 
@@ -126,7 +114,6 @@ export class UsersService {
       throw new BadRequestException('You cannot follow yourself');
     }
 
-    // Fetch current user with their 'following' list
     const currentUser = await this.userRepo.findOne({
       where: { id: currentUserId },
       relations: ['following'],
@@ -134,35 +121,29 @@ export class UsersService {
 
     const targetUser = await this.userRepo.findOne({
       where: { id: targetUserId },
-      relations: ['followers'], // Load followers to add/remove self
+      relations: ['followers'],
     });
 
     if (!currentUser || !targetUser) {
       throw new NotFoundException('User not found');
     }
 
-    // Check if already following
     const isCurrentlyFollowing = currentUser.following.some(
       (u) => u.id === targetUserId,
     );
 
     if (isCurrentlyFollowing) {
-      // UNFOLLOW LOGIC
-      // Remove target from current user's following list
       currentUser.following = currentUser.following.filter(
         (u) => u.id !== targetUserId,
       );
-      // Remove current user from target's followers list
       targetUser.followers = targetUser.followers.filter(
         (u) => u.id !== currentUserId,
       );
     } else {
-      // FOLLOW LOGIC
       currentUser.following.push(targetUser);
       targetUser.followers.push(currentUser);
     }
 
-    // Save both entities to update the junction table
     await this.userRepo.save(currentUser);
     await this.userRepo.save(targetUser);
 
@@ -180,7 +161,6 @@ export class UsersService {
     });
     if (!user) throw new NotFoundException('User not found');
     
-    // Return sanitized list (no emails/passwords)
     return user.followers.map((u) => this.sanitizeUser(u));
   }
 
@@ -194,7 +174,6 @@ export class UsersService {
     return user.following.map((u) => this.sanitizeUser(u));
   }
 
-  // Helper to clean user objects for lists
   private sanitizeUser(user: User) {
     const { passwordHash, email, coinBalance, kycStatus, idCardUrl, verificationVideoUrl, ...publicData } = user;
     return publicData;
@@ -276,8 +255,8 @@ export class UsersService {
   async requestCreatorUpgrade(
     userId: string,
     fullName: string,
-    idCardUrl: string,
-    verificationVideoUrl: string,
+    idCardFile: Express.Multer.File, // CHANGED: Accept File
+    verificationVideoFile: Express.Multer.File, // CHANGED: Accept File
   ) {
     const user = await this.findById(userId);
 
@@ -288,6 +267,12 @@ export class UsersService {
     if (user.kycStatus === KYCStatus.PENDING) {
       throw new BadRequestException('Already pending review');
     }
+
+    // ✅ FIX: Upload ID Card (Image) to Cloudinary
+    const idCardUrl = await this.filesService.uploadImage(idCardFile);
+
+    // ✅ FIX: Upload Video to Cloudinary using the video-specific method
+    const verificationVideoUrl = await this.filesService.uploadVideo(verificationVideoFile);
 
     user.fullName = fullName;
     user.idCardUrl = idCardUrl;
@@ -324,7 +309,6 @@ export class UsersService {
   // PROFILE UPDATE
   // =========================
   async updateProfile(userId: string, updates: Partial<User>) {
-    // Whitelist allowed fields to prevent mass assignment
     const allowedUpdates = ['username', 'email', 'fullName', 'avatarUrl', 'bio'];
     
     for (const key of Object.keys(updates)) {
@@ -338,9 +322,12 @@ export class UsersService {
   }
 
   // =========================
-  // AVATAR UPDATE
+  // AVATAR UPDATE (CLOUDINARY)
   // =========================
-  async updateAvatar(userId: string, avatarUrl: string) {
+  async updateAvatar(userId: string, file: Express.Multer.File) {
+    // ✅ FIX: Upload Image to Cloudinary
+    const avatarUrl = await this.filesService.uploadImage(file);
+
     await this.userRepo.update(userId, {
       avatarUrl: avatarUrl,
     });
@@ -352,7 +339,6 @@ export class UsersService {
   // CHANGE PASSWORD
   // =========================
   async changePassword(userId: string, oldPassword: string, newPassword: string) {
-    // 1. Find user and explicitly select the passwordHash
     const user = await this.userRepo.findOne({ 
       where: { id: userId },
       select: ['id', 'passwordHash'] 
@@ -362,16 +348,12 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
-    // 2. Verify old password against the stored hash
     const isMatch = await bcrypt.compare(oldPassword, user.passwordHash);
     if (!isMatch) {
       throw new BadRequestException('Incorrect current password');
     }
 
-    // 3. Hash the new password
     const newHash = await bcrypt.hash(newPassword, 10);
-
-    // 4. Update the password hash in the database
     await this.userRepo.update(userId, { passwordHash: newHash });
 
     return { message: 'Password updated successfully' };

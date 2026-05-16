@@ -9,6 +9,7 @@ import {
   TransactionCategory, 
   TransactionStatus 
 } from '../wallet/wallet.entity';
+import { FilesService } from '../../common/services/files.service'; // IMPORT CLOUDINARY SERVICE
 
 @Injectable()
 export class CommunitiesService {
@@ -23,33 +24,28 @@ export class CommunitiesService {
     private userRepo: Repository<User>,
     @InjectRepository(Transaction)
     private readonly transactionRepo: Repository<Transaction>,
+    private readonly filesService: FilesService, // INJECT CLOUDINARY SERVICE
   ) {}
 
   // ==================================================
-  // CREATE COMMUNITY (UPDATED)
+  // CREATE COMMUNITY (CLOUDINARY INTEGRATED)
   // ==================================================
   async createCommunity(
     creatorId: string, 
     name: string, 
     minCoins: number,
     description?: string,
-    file?: Express.Multer.File // Handle file upload
+    file?: Express.Multer.File 
   ) {
-    // Basic validation
     if (!name || name.trim() === '') {
       throw new BadRequestException('Community name is required');
     }
 
     let imageUrl: string | undefined;
 
-    // Handle Image Upload (Simplified: assuming you want to store relative path or URL)
-    // If you are using Cloudinary/S3, upload logic goes here.
-    // For now, we just use the filename if a file was provided.
+    // ✅ FIX: Upload to Cloudinary if file exists
     if (file) {
-      // In a real app, you would upload `file` to a cloud service here
-      // and set `imageUrl` to the returned URL.
-      // For local testing, we might just use the filename.
-      imageUrl = file.filename; 
+      imageUrl = await this.filesService.uploadImage(file);
     }
 
     const community = this.communityRepo.create({
@@ -57,7 +53,7 @@ export class CommunitiesService {
       name: name.trim(),
       description: description ? description.trim() : undefined,
       minCoinsToJoin: minCoins,
-      imageUrl: imageUrl,
+      imageUrl: imageUrl, // This now holds the full Cloudinary URL
     });
     
     return this.communityRepo.save(community);
@@ -75,7 +71,7 @@ export class CommunitiesService {
     return communities.map(c => ({
       id: c.id,
       name: c.name,
-      description: c.description, // Added description
+      description: c.description,
       minCoinsToJoin: c.minCoinsToJoin,
       imageUrl: c.imageUrl,
       createdAt: c.createdAt,
@@ -101,7 +97,7 @@ export class CommunitiesService {
     return {
       id: community.id,
       name: community.name,
-      description: community.description, // Added description
+      description: community.description,
       minCoinsToJoin: community.minCoinsToJoin,
       imageUrl: community.imageUrl,
       createdAt: community.createdAt,

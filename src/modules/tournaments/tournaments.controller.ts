@@ -1,9 +1,21 @@
-import { Controller, Get, Post, Body, Param, UseGuards, Req, Patch } from '@nestjs/common';
+import { 
+  Controller, 
+  Get, 
+  Post, 
+  Body, 
+  Param, 
+  UseGuards, 
+  Req, 
+  Patch, 
+  UseInterceptors, 
+  UploadedFile 
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { TournamentsService } from './tournaments.service';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard'; // Ensure this path is correct
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Controller('tournaments')
-@UseGuards(JwtAuthGuard) // Secure all tournament routes
+@UseGuards(JwtAuthGuard) 
 export class TournamentsController {
   constructor(private readonly tournamentsService: TournamentsService) {}
 
@@ -12,21 +24,24 @@ export class TournamentsController {
     return this.tournamentsService.getTournaments();
   }
 
+  // =========================
+  // CREATE TOURNAMENT (With Image Upload)
+  // =========================
   @Post('create')
+  @UseInterceptors(FileInterceptor('file')) // 'file' matches the Flutter field name
   async create(
+    @UploadedFile() file: Express.Multer.File,
     @Body() body: { 
-      hostId: string; 
       title: string; 
-      bracketUrl: string; 
       fee: number 
     },
     @Req() req: any
   ) {
     // Security: Force hostId to be the logged-in user
     return this.tournamentsService.createTournament(
-      req.user.id, // overridden for security
+      req.user.id, 
       body.title, 
-      body.bracketUrl, 
+      file, // Pass the file to be uploaded to Cloudinary
       body.fee
     );
   }
@@ -38,11 +53,11 @@ export class TournamentsController {
   ) {
     return this.tournamentsService.joinTournament(
       body.tournamentId,
-      req.user.id, // Get userId from token
+      req.user.id, 
     );
   }
 
-  // --- NEW: START TOURNAMENT ---
+  // --- START TOURNAMENT ---
   @Patch(':id/start')
   async startTournament(
     @Param('id') id: string,
@@ -51,11 +66,11 @@ export class TournamentsController {
     return this.tournamentsService.startTournament(id, req.user.id);
   }
 
-  // --- NEW: END TOURNAMENT ---
+  // --- END TOURNAMENT ---
   @Patch(':id/end')
   async endTournament(
     @Param('id') id: string,
-    @Body() body: { winnerId?: string }, // Optional winner
+    @Body() body: { winnerId?: string }, 
     @Req() req: any
   ) {
     return this.tournamentsService.endTournament(id, req.user.id, body.winnerId);
@@ -76,8 +91,8 @@ export class TournamentsController {
   ) {
     return this.tournamentsService.sendMessage(
       body.groupId, 
-      req.user.id, // Secure senderId
-      req.user.username, // Use username from token if available, or fetch in service
+      req.user.id, 
+      req.user.username, 
       body.content
     );
   }

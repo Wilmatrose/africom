@@ -21,9 +21,7 @@ import {
   FileFieldsInterceptor,
 } from '@nestjs/platform-express';
 
-import { diskStorage } from 'multer';
-import { v4 as uuidv4 } from 'uuid';
-import { extname } from 'path';
+// Removed: diskStorage, uuid, extname imports
 
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
@@ -71,31 +69,11 @@ export class UsersController {
   }
 
   // =========================
-  // AVATAR UPLOAD
+  // AVATAR UPLOAD (CLOUDINARY)
   // =========================
 
   @Post('me/avatar')
-  @UseInterceptors(
-    FileInterceptor('file', {
-      storage: diskStorage({
-        destination: './uploads/avatars',
-        filename: (req: any, file, callback) => {
-          const uniqueName = uuidv4();
-          const extension = extname(file.originalname);
-          callback(null, `${uniqueName}${extension}`);
-        },
-      }),
-      fileFilter: (req: any, file, callback) => {
-        if (!file.mimetype.match(/\/(jpg|jpeg|png|gif)$/i)) {
-          return callback(
-            new BadRequestException('Only image files are allowed!'),
-            false,
-          );
-        }
-        callback(null, true);
-      },
-    }),
-  )
+  @UseInterceptors(FileInterceptor('file')) // Uses Memory Storage from CommonModule
   async uploadAvatar(
     @Req() req: any,
     @UploadedFile() file: Express.Multer.File,
@@ -104,19 +82,12 @@ export class UsersController {
       throw new BadRequestException('File is required');
     }
 
-    const avatarUrl = `${req.protocol}://${req.get('host')}/uploads/avatars/${file.filename}`;
-
-    await this.usersService.updateAvatar(req.user.id, avatarUrl);
-
-    return {
-      success: true,
-      message: 'Avatar uploaded successfully',
-      avatarUrl,
-    };
+    // Pass the FILE to the service. The service uploads to Cloudinary and returns the URL.
+    return this.usersService.updateAvatar(req.user.id, file);
   }
 
   // =========================
-  // KYC UPLOAD
+  // KYC UPLOAD (CLOUDINARY)
   // =========================
 
   @Post('me/kyc')
@@ -126,22 +97,12 @@ export class UsersController {
         { name: 'idCard', maxCount: 1 },
         { name: 'verificationVideo', maxCount: 1 },
       ],
-      {
-        storage: diskStorage({
-          destination: './uploads/kyc',
-          filename: (req: any, file, callback) => {
-            const userId = req.user?.id || 'anonymous';
-            const uniqueName = `${userId}_${uuidv4()}`;
-            const extension = extname(file.originalname);
-            callback(null, `${uniqueName}${extension}`);
-          },
-        }),
-      },
+      // Uses Memory Storage from CommonModule
     ),
   )
   async submitKyc(
     @Req() req: any,
-    @Body() body: any,
+    @Body() body: { fullName?: string },
     @UploadedFiles()
     files: {
       idCard?: Express.Multer.File[];
@@ -155,15 +116,13 @@ export class UsersController {
       throw new BadRequestException('Both ID Card and Video are required');
     }
 
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const idCardUrl = `${baseUrl}/uploads/kyc/${idCardFile.filename}`;
-    const videoUrl = `${baseUrl}/uploads/kyc/${videoFile.filename}`;
-
+    // Pass FILES to the service. 
+    // The service will handle uploading Image vs Video to Cloudinary.
     return this.usersService.requestCreatorUpgrade(
       req.user.id,
       body.fullName,
-      idCardUrl,
-      videoUrl,
+      idCardFile,
+      videoFile,
     );
   }
 
@@ -171,11 +130,6 @@ export class UsersController {
   // PUBLIC PROFILE & SOCIAL
   // =========================
 
-  /**
-   * Get a user's public profile.
-   * If requester is the owner, show private data (coins, email).
-   * If requester is a stranger, hide private data.
-   */
   @Get(':id')
   async getUser(
     @Param('id', ParseUUIDPipe) id: string,
@@ -185,10 +139,6 @@ export class UsersController {
     return this.usersService.getPublicProfile(id, requesterId);
   }
 
-  /**
-   * Follow a user.
-   * Toggles follow state: if already following, unfollows.
-   */
   @Post(':id/follow')
   async followUser(
     @Param('id', ParseUUIDPipe) targetId: string,
@@ -197,17 +147,11 @@ export class UsersController {
     return this.usersService.toggleFollow(req.user.id, targetId);
   }
 
-  /**
-   * Get list of followers
-   */
   @Get(':id/followers')
   async getFollowers(@Param('id', ParseUUIDPipe) id: string) {
     return this.usersService.getFollowers(id);
   }
 
-  /**
-   * Get list of following
-   */
   @Get(':id/following')
   async getFollowing(@Param('id', ParseUUIDPipe) id: string) {
     return this.usersService.getFollowing(id);

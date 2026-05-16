@@ -7,7 +7,7 @@ import {
 
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { EventEmitter2 } from '@nestjs/event-emitter'; // NEW: For Real-time events
+import { EventEmitter2 } from '@nestjs/event-emitter';
 
 import {
   Tournament,
@@ -23,6 +23,7 @@ import {
   TransactionCategory, 
   TransactionStatus 
 } from '../wallet/wallet.entity';
+import { FilesService } from '../../common/services/files.service'; // IMPORT CLOUDINARY SERVICE
 
 @Injectable()
 export class TournamentsService {
@@ -42,22 +43,30 @@ export class TournamentsService {
     @InjectRepository(Transaction)
     private readonly transactionRepo: Repository<Transaction>,
     
-    private readonly eventEmitter: EventEmitter2, // Inject EventEmitter
+    private readonly eventEmitter: EventEmitter2,
+    private readonly filesService: FilesService, // INJECT CLOUDINARY SERVICE
   ) {}
 
   // =========================
-  // CREATE
+  // CREATE (WITH CLOUDINARY UPLOAD)
   // =========================
   async createTournament(
     hostId: string,
     title: string,
-    bracketUrl: string,
+    file: Express.Multer.File, // Changed from bracketUrl string to File object
     fee: number,
   ) {
+    let bracketImageUrl: string | null = null;
+
+    // ✅ FIX: Upload to Cloudinary if file exists
+    if (file) {
+      bracketImageUrl = await this.filesService.uploadImage(file);
+    }
+
     const tournament = this.tournamentRepo.create({
       hostId,
       title,
-      bracketImageUrl: bracketUrl,
+      bracketImageUrl: bracketImageUrl, // Save the Cloudinary URL
       entryFeeCoins: fee,
       status: 'SCHEDULED',
     });
@@ -70,13 +79,12 @@ export class TournamentsService {
   // =========================
   async getTournaments() {
     const tournaments = await this.tournamentRepo.find({
-      relations: ['host'], // Load the host relation
+      relations: ['host'],
       order: {
         createdAt: 'DESC',
       },
     });
 
-    // Map through and return a clean object with Host Info
     return tournaments.map(t => ({
       id: t.id,
       title: t.title,
@@ -84,7 +92,6 @@ export class TournamentsService {
       entryFeeCoins: t.entryFeeCoins,
       bracketImageUrl: t.bracketImageUrl,
       createdAt: t.createdAt,
-      // Attach Creator Info for Frontend
       creator: t.host ? {
         id: t.host.id,
         username: t.host.username,
@@ -153,7 +160,7 @@ export class TournamentsService {
     tournament.status = 'LIVE';
     await this.tournamentRepo.save(tournament);
 
-    // Emit event for Push Notifications (Frontend listens to this)
+    // Emit event for Push Notifications
     this.eventEmitter.emit('tournament_started', { 
       tournamentId: tournament.id, 
       title: tournament.title 
@@ -168,17 +175,17 @@ export class TournamentsService {
   async endTournament(tournamentId: string, userId: string, winnerId?: string) {
     const tournament = await this.tournamentRepo.findOne({ 
       where: { id: tournamentId },
-      relations: ['participants'] // Load participants to calculate pot
+      relations: ['participants']
     });
     
     if (!tournament) throw new NotFoundException('Tournament not found');
     if (tournament.hostId !== userId) throw new ForbiddenException('Only the host can end');
     if (tournament.status === 'FINISHED') throw new BadRequestException('Already finished');
 
-    // 1. Calculate Pot (Total Entry Fees)
+    // 1. Calculate Pot
     const pot = tournament.entryFeeCoins * (tournament.participants?.length || 0);
 
-    // 2. Distribute Winnings (If winner specified)
+    // 2. Distribute Winnings
     if (winnerId && pot > 0) {
       const winner = await this.userRepo.findOne({ where: { id: winnerId } });
       if (winner) {
@@ -219,7 +226,6 @@ export class TournamentsService {
     const tournament = await this.tournamentRepo.findOne({ where: { id: groupId } });
     if (!tournament) throw new BadRequestException('Tournament not found');
 
-    // Allow Host to always speak
     if (tournament.hostId !== senderId) {
       const participant = await this.participantRepo.findOne({
         where: { tournamentId: groupId, userId: senderId },
