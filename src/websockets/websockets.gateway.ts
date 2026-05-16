@@ -16,6 +16,7 @@ import { WalletService } from '../modules/wallet/wallet.service';
 import { UsersService } from '../modules/users/users/users.service';
 
 // --- DTOs for Validation ---
+
 class JoinStreamPayload {
   sessionId: string;
 }
@@ -25,7 +26,10 @@ class JoinGroupPayload {
 }
 
 class SendMessagePayload {
-  groupId: string;
+  // ==================================================
+  // FIX: Changed from 'groupId' to 'sessionId' to match Flutter Client
+  // ==================================================
+  sessionId: string;
   message: string;
 }
 
@@ -52,14 +56,12 @@ export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconne
   private connectedUsers: Map<string, { userId: string; username: string }> = new Map();
 
   // --- SERVER-SIDE PRICE LIST (Source of Truth) ---
-  // This prevents users from modifying the app to send gifts for cheaper prices.
   private readonly GIFT_PRICES: { [key: string]: number } = {
     'Rose': 50,
     'Fire': 100,
     'Car': 500,
     'Jet': 1000,
   };
-  // -------------------------------------------------
 
   constructor(
     private readonly jwtService: JwtService,
@@ -86,8 +88,6 @@ export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconne
       const user = await this.usersService.findById(userId);
       
       this.connectedUsers.set(client.id, { userId: user.id, username: user.username });
-      
-      // Join Personal Room
       client.join(`user_${user.id}`);
 
       this.logger.log(`✅ Client connected: ${client.id} | User: ${user.username}`);
@@ -106,6 +106,7 @@ export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconne
 
   @SubscribeMessage('join_stream')
   handleJoinStream(@MessageBody() payload: JoinStreamPayload, @ConnectedSocket() client: Socket) {
+    // payload.sessionId matches Flutter's joinStream call
     client.join(`session_${payload.sessionId}`);
     this.logger.log(`User joined stream: ${payload.sessionId}`);
   }
@@ -126,7 +127,10 @@ export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconne
     const sender = this.connectedUsers.get(client.id);
     if (!sender || !payload.message || payload.message.trim() === '') return;
 
-    this.server.to(`session_${payload.groupId}`).emit('stream:message', {
+    // ==================================================
+    // FIX: Broadcasting to correct session room using sessionId
+    // ==================================================
+    this.server.to(`session_${payload.sessionId}`).emit('stream:message', {
       username: sender.username,
       message: payload.message,
       timestamp: new Date(),
@@ -155,7 +159,6 @@ export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconne
       }
 
       // --- SECURITY: VALIDATE GIFT PRICE ON SERVER ---
-      // We ignore the 'cost' sent by the client and look it up here.
       const giftName = payload.giftName;
       const actualCost = this.GIFT_PRICES[giftName];
 
@@ -164,11 +167,9 @@ export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconne
         client.emit('error', { message: 'Invalid gift item' });
         return;
       }
-      // ---------------------------------------------------
 
       const ref = `gift-${Date.now()}`;
 
-      // Use the server-verified 'actualCost', not the client's 'payload.cost'
       await this.walletService.debitFan(
         sender.userId, 
         actualCost, 
@@ -190,6 +191,7 @@ export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconne
         amount: actualCost,
       });
 
+      // Broadcasting to the correct session room
       this.server.to(`session_${payload.sessionId}`).emit('onGiftReceived', {
         message: `${sender.username} sent ${giftName}!`,
         sender: sender.username,
@@ -207,18 +209,12 @@ export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconne
     }
   }
 
-  // --- INTERNAL EVENT LISTENERS (From WalletController) ---
+  // --- INTERNAL EVENT LISTENERS ---
 
-  /**
-   * Listens for 'gift.sent' event emitted by WalletController
-   * This handles gifts sent via HTTP endpoints (if any) 
-   * or ensures synchronization if logic was executed elsewhere.
-   */
   @OnEvent('gift.sent')
   handleInternalGiftSent(payload: any) {
     this.logger.log(`Received internal gift event: ${JSON.stringify(payload)}`);
     
-    // Notify Recipient
     this.server.to(`user_${payload.recipientId}`).emit('onCreatorAlert', {
       type: 'GIFT',
       sender: payload.senderName,
@@ -226,7 +222,6 @@ export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconne
       amount: payload.amount,
     });
 
-    // Broadcast to Stream Room
     if (payload.streamId) {
       this.server.to(`session_${payload.streamId}`).emit('onGiftReceived', {
         message: `${payload.senderName} sent ${payload.gift}!`,
@@ -237,10 +232,6 @@ export class WebsocketsGateway implements OnGatewayConnection, OnGatewayDisconne
     }
   }
 
-  /**
-   * Listens for 'wallet.withdrawal.created' event emitted by WalletController
-   * Notifies the user that their withdrawal request was received.
-   */
   @OnEvent('wallet.withdrawal.created')
   handleInternalWithdrawal(payload: any) {
     this.logger.log(`Received internal withdrawal event for user: ${payload.userId}`);

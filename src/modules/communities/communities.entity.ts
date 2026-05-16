@@ -24,9 +24,6 @@ export class Community {
   @Column()
   name: string;
 
-  // ==================================================
-  // ADDED: Description Column
-  // ==================================================
   @Column({ type: 'text', nullable: true })
   description?: string;
 
@@ -39,9 +36,6 @@ export class Community {
   @CreateDateColumn()
   createdAt: Date;
 
-  // ==================================================
-  // ADDED: Relations for Posts and Participants
-  // ==================================================
   @OneToMany(() => CommunityPost, post => post.community)
   posts: CommunityPost[];
 
@@ -60,7 +54,6 @@ export class CommunityParticipant {
   @Column()
   userId!: string;
 
-  // Added back-reference
   @ManyToOne(() => Community, community => community.participants)
   @JoinColumn({ name: 'communityId' })
   community: Community;
@@ -77,10 +70,15 @@ export class CommunityPost {
   @Column()
   communityId: string;
 
-  // Added back-reference
+  // ==================================================
+  // TEMPORARY FIX: Added { nullable: true }
+  // This allows the server to start with existing NULL data.
+  // DELETE THIS OPTION after cleaning the DB.
+  // ==================================================
   @ManyToOne(() => Community, community => community.posts, { nullable: true })
   @JoinColumn({ name: 'communityId' })
   community: Community;
+  // ==================================================
 
   @Column()
   authorId: string;
