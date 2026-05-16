@@ -13,13 +13,18 @@ import * as bcrypt from 'bcryptjs';
 export class AuthController {
   constructor(private authService: AuthService) {}
 
-  @Post('signup')
-  // Add @Req() req to access the request object
-  async signup(@Body() body: SignupDto, @Req() req: Request) {
-    console.log('CONTROLLER: Signup request received for', body.username);
-    // Pass req.ip as the second argument
-    return this.authService.signup(body, req.ip);
+ @Post('signup')
+async signup(@Body() body: SignupDto, @Req() req: Request) {
+  console.log('CONTROLLER: Signup request received for', body.username);
+  try {
+    const result = await this.authService.signup(body, req.ip);
+    console.log('CONTROLLER: Signup successful');
+    return result;
+  } catch (error) {
+    console.error('CONTROLLER: Signup failed', error);
+    throw error; // Re-throw so Nest sends the proper error code
   }
+}
 
   @Post('login')
   // Add @Req() req to access the request object
