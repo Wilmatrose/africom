@@ -13,6 +13,6 @@ import { FilesService } from './services/files.service';
   ],
   controllers: [FilesController],
   providers: [FilesService],
-  exports: [FilesService, MulterModule],
+  exports: [FilesService, MulterModule], // ✅ Exports FilesService
 })
 export class CommonModule {}
