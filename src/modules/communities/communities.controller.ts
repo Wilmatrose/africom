@@ -2,13 +2,13 @@ import {
   Controller, 
   Get, 
   Post, 
+  Delete,
   Body, 
   Param, 
   UseGuards, 
   Req, 
   UseInterceptors, 
   UploadedFile,
-  Patch // Added for future updates
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CommunitiesService } from './communities.service';
@@ -43,13 +43,12 @@ export class CommunitiesController {
     }, 
     @Req() req: any
   ) {
-    // Validation moved to Service
     return this.communitiesService.createCommunity(
       req.user.id, 
       body.name, 
       body.minCoins,
       body.description,
-      file // Pass the file for Cloudinary upload
+      file 
     );
   }
 
@@ -69,12 +68,16 @@ export class CommunitiesController {
     return this.communitiesService.getPosts(id);
   }
 
+  // =========================
+  // CREATE POST (CREATOR ONLY)
+  // =========================
   @Post('post')
+  @UseInterceptors(FileInterceptor('file')) // Handle file upload here
   async createPost(
+    @UploadedFile() file: Express.Multer.File,
     @Body() body: { 
       communityId: string; 
-      text?: string; 
-      voiceUrl?: string 
+      text?: string
     },
     @Req() req: any
   ) {
@@ -82,8 +85,16 @@ export class CommunitiesController {
       body.communityId, 
       req.user.id,
       req.user.username,
-      body.text, 
-      body.voiceUrl
+      body.text,
+      file // Pass file (image or video) to service
     );
+  }
+
+  // =========================
+  // DELETE COMMUNITY
+  // =========================
+  @Delete(':id')
+  async delete(@Param('id') id: string, @Req() req: any) {
+    return this.communitiesService.deleteCommunity(id, req.user.id);
   }
 }

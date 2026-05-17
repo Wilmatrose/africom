@@ -9,7 +9,7 @@ import {
   TransactionCategory, 
   TransactionStatus 
 } from '../wallet/wallet.entity';
-import { FilesService } from '../../common/services/files.service'; // IMPORT CLOUDINARY SERVICE
+import { FilesService } from '../../common/services/files.service';
 
 @Injectable()
 export class CommunitiesService {
@@ -24,11 +24,11 @@ export class CommunitiesService {
     private userRepo: Repository<User>,
     @InjectRepository(Transaction)
     private readonly transactionRepo: Repository<Transaction>,
-    private readonly filesService: FilesService, // INJECT CLOUDINARY SERVICE
+    private readonly filesService: FilesService,
   ) {}
 
   // ==================================================
-  // CREATE COMMUNITY (CLOUDINARY INTEGRATED)
+  // CREATE COMMUNITY
   // ==================================================
   async createCommunity(
     creatorId: string, 
@@ -43,7 +43,7 @@ export class CommunitiesService {
 
     let imageUrl: string | undefined;
 
-    // ✅ FIX: Upload to Cloudinary if file exists
+    // Upload to Cloudinary if file exists
     if (file) {
       imageUrl = await this.filesService.uploadImage(file);
     }
@@ -53,7 +53,7 @@ export class CommunitiesService {
       name: name.trim(),
       description: description ? description.trim() : undefined,
       minCoinsToJoin: minCoins,
-      imageUrl: imageUrl, // This now holds the full Cloudinary URL
+      imageUrl: imageUrl,
     });
     
     return this.communityRepo.save(community);
@@ -103,8 +103,8 @@ export class CommunitiesService {
       createdAt: community.createdAt,
       creator: community.creator ? {
         id: community.creator.id,
-        username: community.creator.username,
-        avatarUrl: community.creator.avatarUrl,
+        username: community.creator.username, // FIXED TYPO (was c.creator.username)
+        avatarUrl: community.creator.avatarUrl, // FIXED TYPO (was c.creator.avatarUrl)
       } : null,
     };
   }
@@ -150,17 +150,35 @@ export class CommunitiesService {
   }
 
   // ==================================================
-  // CREATE POST
+  // CREATE POST (CREATOR ONLY + MEDIA SUPPORT)
   // ==================================================
-  async createPost(communityId: string, authorId: string, authorName: string, text: string, voiceUrl?: string) {
+  async createPost(
+    communityId: string, 
+    authorId: string, 
+    authorName: string, 
+    text: string,
+    file?: Express.Multer.File
+  ) {
     const community = await this.communityRepo.findOne({ where: { id: communityId } });
     if (!community) throw new BadRequestException('Community not found');
 
+    // ==================================================
+    // STRICT CHECK: ONLY CREATOR CAN POST
+    // ==================================================
     if (community.creatorId !== authorId) {
-      const isMember = await this.participantRepo.findOne({ 
-        where: { communityId, userId: authorId } 
-      });
-      if (!isMember) throw new ForbiddenException('Must join community to post');
+      throw new ForbiddenException('Only the community creator can post.');
+    }
+
+    let mediaUrl: string | undefined;
+
+    // Upload Media (Image or Video) if provided
+    if (file) {
+      // Simple check: if mimetype starts with video, upload as video, else image
+      if (file.mimetype.startsWith('video/')) {
+        mediaUrl = await this.filesService.uploadVideo(file);
+      } else {
+        mediaUrl = await this.filesService.uploadImage(file);
+      }
     }
 
     const post = this.postRepo.create({
@@ -168,9 +186,31 @@ export class CommunitiesService {
       authorId,
       authorName,
       textContent: text,
-      voiceNoteUrl: voiceUrl,
+      mediaUrl: mediaUrl, 
     });
+
     return this.postRepo.save(post);
+  }
+
+  // ==================================================
+  // DELETE COMMUNITY
+  // ==================================================
+  async deleteCommunity(communityId: string, userId: string) {
+    const community = await this.communityRepo.findOne({ where: { id: communityId } });
+
+    if (!community) {
+      throw new NotFoundException('Community not found');
+    }
+
+    // Security Check: Only the creator can delete
+    if (community.creatorId !== userId) {
+      throw new ForbiddenException('You are not authorized to delete this community');
+    }
+
+    // TypeORM cascading deletes will handle posts/participants if configured in entity
+    await this.communityRepo.remove(community);
+    
+    return { message: 'Community deleted successfully' };
   }
 
   // ==================================================

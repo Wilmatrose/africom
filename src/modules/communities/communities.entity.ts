@@ -71,14 +71,11 @@ export class CommunityPost {
   communityId: string;
 
   // ==================================================
-  // TEMPORARY FIX: Added { nullable: true }
-  // This allows the server to start with existing NULL data.
-  // DELETE THIS OPTION after cleaning the DB.
+  // RELATION: A post must belong to a community
   // ==================================================
-  @ManyToOne(() => Community, community => community.posts, { nullable: true })
+  @ManyToOne(() => Community, community => community.posts)
   @JoinColumn({ name: 'communityId' })
   community: Community;
-  // ==================================================
 
   @Column()
   authorId: string;
@@ -89,8 +86,12 @@ export class CommunityPost {
   @Column({ type: 'text', nullable: true })
   textContent: string;
 
+  // ==================================================
+  // MEDIA URL
+  // Supports Images or Videos hosted on Cloudinary
+  // ==================================================
   @Column({ nullable: true })
-  voiceNoteUrl: string; 
+  mediaUrl: string; 
 
   @CreateDateColumn()
   createdAt: Date;
