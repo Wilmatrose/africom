@@ -18,7 +18,8 @@ export enum TransactionCategory {
   
   // TOURNAMENTS & COMMUNITIES
   TOURNAMENT_JOIN = 'TOURNAMENT_JOIN', 
-  TOURNAMENT_WIN = 'TOURNAMENT_WIN', // ADDED: For prize distributions
+  TOURNAMENT_WIN = 'TOURNAMENT_WIN',
+  TOURNAMENT_REFUND = 'TOURNAMENT_REFUND', // ✅ ADDED: For refunds on kick/cancel
   COMMUNITY_JOIN = 'COMMUNITY_JOIN',
 }
 

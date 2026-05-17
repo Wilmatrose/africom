@@ -7,6 +7,7 @@ import {
   UseGuards, 
   Req, 
   Patch, 
+  Delete,
   UseInterceptors, 
   UploadedFile 
 } from '@nestjs/common';
@@ -28,21 +29,22 @@ export class TournamentsController {
   // CREATE TOURNAMENT (With Image Upload)
   // =========================
   @Post('create')
-  @UseInterceptors(FileInterceptor('file')) // 'file' matches the Flutter field name
+  @UseInterceptors(FileInterceptor('file')) 
   async create(
     @UploadedFile() file: Express.Multer.File,
     @Body() body: { 
       title: string; 
-      fee: number 
+      fee: number;
+      maxParticipants?: number; // ✅ NEW: Accept maxParticipants
     },
     @Req() req: any
   ) {
-    // Security: Force hostId to be the logged-in user
     return this.tournamentsService.createTournament(
       req.user.id, 
       body.title, 
-      file, // Pass the file to be uploaded to Cloudinary
-      body.fee
+      file, 
+      body.fee,
+      body.maxParticipants
     );
   }
 
@@ -74,6 +76,25 @@ export class TournamentsController {
     @Req() req: any
   ) {
     return this.tournamentsService.endTournament(id, req.user.id, body.winnerId);
+  }
+
+  // --- CANCEL TOURNAMENT (HOST ONLY) ---
+  @Delete(':id')
+  async cancel(
+    @Param('id') id: string,
+    @Req() req: any
+  ) {
+    return this.tournamentsService.cancelTournament(id, req.user.id);
+  }
+
+  // --- KICK PARTICIPANT (HOST ONLY) ---
+  @Post(':id/kick/:userId')
+  async kick(
+    @Param('id') id: string,
+    @Param('userId') targetUserId: string,
+    @Req() req: any
+  ) {
+    return this.tournamentsService.kickParticipant(id, targetUserId, req.user.id);
   }
 
   @Get('messages/:groupId')

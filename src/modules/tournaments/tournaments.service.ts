@@ -23,7 +23,7 @@ import {
   TransactionCategory, 
   TransactionStatus 
 } from '../wallet/wallet.entity';
-import { FilesService } from '../../common/services/files.service'; // IMPORT CLOUDINARY SERVICE
+import { FilesService } from '../../common/services/files.service'; 
 
 @Injectable()
 export class TournamentsService {
@@ -44,7 +44,7 @@ export class TournamentsService {
     private readonly transactionRepo: Repository<Transaction>,
     
     private readonly eventEmitter: EventEmitter2,
-    private readonly filesService: FilesService, // INJECT CLOUDINARY SERVICE
+    private readonly filesService: FilesService, 
   ) {}
 
   // =========================
@@ -53,12 +53,12 @@ export class TournamentsService {
   async createTournament(
     hostId: string,
     title: string,
-    file: Express.Multer.File, // Changed from bracketUrl string to File object
+    file: Express.Multer.File,
     fee: number,
+    maxParticipants?: number, 
   ) {
     let bracketImageUrl: string | null = null;
 
-    // ✅ FIX: Upload to Cloudinary if file exists
     if (file) {
       bracketImageUrl = await this.filesService.uploadImage(file);
     }
@@ -66,8 +66,9 @@ export class TournamentsService {
     const tournament = this.tournamentRepo.create({
       hostId,
       title,
-      bracketImageUrl: bracketImageUrl, // Save the Cloudinary URL
+      bracketImageUrl: bracketImageUrl,
       entryFeeCoins: fee,
+      maxParticipants: maxParticipants || 16,
       status: 'SCHEDULED',
     });
 
@@ -79,7 +80,7 @@ export class TournamentsService {
   // =========================
   async getTournaments() {
     const tournaments = await this.tournamentRepo.find({
-      relations: ['host'],
+      relations: ['host', 'participants'], 
       order: {
         createdAt: 'DESC',
       },
@@ -91,6 +92,8 @@ export class TournamentsService {
       status: t.status,
       entryFeeCoins: t.entryFeeCoins,
       bracketImageUrl: t.bracketImageUrl,
+      maxParticipants: t.maxParticipants,
+      currentParticipants: t.participants?.length || 0,
       createdAt: t.createdAt,
       creator: t.host ? {
         id: t.host.id,
@@ -101,15 +104,21 @@ export class TournamentsService {
   }
 
   // =========================
-  // JOIN (PAYMENT LOGIC)
+  // JOIN (PAYMENT LOGIC + CAPACITY CHECK)
   // =========================
   async joinTournament(tournamentId: string, userId: string) {
     const tournament = await this.tournamentRepo.findOne({
       where: { id: tournamentId },
+      relations: ['participants'], 
     });
 
     if (!tournament) throw new BadRequestException('Tournament not found');
     if (tournament.status !== 'SCHEDULED') throw new BadRequestException('Tournament already started');
+
+    // Check Capacity
+    if (tournament.participants.length >= tournament.maxParticipants) {
+      throw new BadRequestException('Tournament is full');
+    }
 
     const existingParticipant = await this.participantRepo.findOne({
       where: { tournamentId, userId },
@@ -160,7 +169,6 @@ export class TournamentsService {
     tournament.status = 'LIVE';
     await this.tournamentRepo.save(tournament);
 
-    // Emit event for Push Notifications
     this.eventEmitter.emit('tournament_started', { 
       tournamentId: tournament.id, 
       title: tournament.title 
@@ -182,17 +190,14 @@ export class TournamentsService {
     if (tournament.hostId !== userId) throw new ForbiddenException('Only the host can end');
     if (tournament.status === 'FINISHED') throw new BadRequestException('Already finished');
 
-    // 1. Calculate Pot
     const pot = tournament.entryFeeCoins * (tournament.participants?.length || 0);
 
-    // 2. Distribute Winnings
     if (winnerId && pot > 0) {
       const winner = await this.userRepo.findOne({ where: { id: winnerId } });
       if (winner) {
         winner.coinBalance += pot;
         await this.userRepo.save(winner);
 
-        // Log Winning Transaction
         const tx = this.transactionRepo.create({
           userId: winner.id,
           amount: pot,
@@ -205,13 +210,88 @@ export class TournamentsService {
       }
     }
 
-    // 3. Update Status
     tournament.status = 'FINISHED';
     await this.tournamentRepo.save(tournament);
 
     this.eventEmitter.emit('tournament_ended', { tournamentId: tournament.id });
 
     return { success: true, winnerBalance: pot };
+  }
+
+  // =========================
+  // CANCEL TOURNAMENT (HOST ONLY, REFUND ALL)
+  // =========================
+  async cancelTournament(tournamentId: string, userId: string) {
+    const tournament = await this.tournamentRepo.findOne({ 
+      where: { id: tournamentId },
+      relations: ['participants']
+    });
+
+    if (!tournament) throw new NotFoundException('Tournament not found');
+    if (tournament.hostId !== userId) throw new ForbiddenException('Only the host can cancel');
+    if (tournament.status !== 'SCHEDULED') throw new BadRequestException('Can only cancel scheduled tournaments');
+
+    for (const participant of tournament.participants) {
+      const user = await this.userRepo.findOne({ where: { id: participant.userId } });
+      if (user) {
+        user.coinBalance += tournament.entryFeeCoins;
+        await this.userRepo.save(user);
+
+        await this.transactionRepo.save({
+          userId: user.id,
+          amount: tournament.entryFeeCoins,
+          type: TransactionType.CREDIT,
+          category: TransactionCategory.TOURNAMENT_REFUND,
+          reference: `cancel-${tournament.id}`,
+          status: TransactionStatus.COMPLETED,
+        });
+      }
+    }
+
+    await this.participantRepo.delete({ tournamentId });
+    await this.tournamentRepo.delete(tournamentId);
+
+    this.eventEmitter.emit('tournament_cancelled', { tournamentId });
+
+    return { success: true };
+  }
+
+  // =========================
+  // KICK PARTICIPANT (HOST ONLY, REFUND ONE)
+  // =========================
+  async kickParticipant(tournamentId: string, targetUserId: string, hostId: string) {
+    const tournament = await this.tournamentRepo.findOne({
+      where: { id: tournamentId },
+      relations: ['participants']
+    });
+
+    if (!tournament) throw new NotFoundException('Tournament not found');
+    if (tournament.hostId !== hostId) throw new ForbiddenException('Only the host can kick');
+    if (tournament.status !== 'SCHEDULED') throw new BadRequestException('Can only kick scheduled tournaments');
+
+    const participant = tournament.participants.find(p => p.userId === targetUserId);
+    if (!participant) throw new NotFoundException('Participant not found');
+
+    const user = await this.userRepo.findOne({ where: { id: targetUserId } });
+    if (user) {
+      user.coinBalance += tournament.entryFeeCoins;
+      await this.userRepo.save(user);
+
+      await this.transactionRepo.save({
+        userId: user.id,
+        amount: tournament.entryFeeCoins,
+        type: TransactionType.CREDIT,
+        category: TransactionCategory.TOURNAMENT_REFUND,
+        reference: `kick-${tournament.id}`,
+        status: TransactionStatus.COMPLETED,
+      });
+    }
+
+    await this.participantRepo.remove(participant);
+
+    this.eventEmitter.emit('tournament_user_kicked', { tournamentId, userId: targetUserId });
+
+    return { success: true };
   }
 
   // =========================
@@ -243,7 +323,6 @@ export class TournamentsService {
 
     const savedMessage = await this.messageRepo.save(message);
     
-    // Emit to Socket
     this.eventEmitter.emit('tournament_message', savedMessage);
     
     return savedMessage;

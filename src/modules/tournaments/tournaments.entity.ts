@@ -26,6 +26,10 @@ export class Tournament {
   @Column({ default: 0 })
   entryFeeCoins: number; 
 
+  // ✅ NEW: Maximum capacity for the tournament
+  @Column({ default: 16 })
+  maxParticipants: number;
+
   // RELATION: List of participants (for pot calculation)
   @OneToMany(() => TournamentParticipant, (participant) => participant.tournament)
   participants!: TournamentParticipant[];

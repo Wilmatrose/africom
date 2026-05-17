@@ -106,6 +106,14 @@ export class GroupsController {
   }
 
   // =========================
+  // DELETE GROUP (CREATOR ONLY)
+  // =========================
+  @Delete(':id')
+  async deleteGroup(@Param('id') id: string, @Req() req: any) {
+    return this.groupsService.deleteGroup(id, req.user.id);
+  }
+
+  // =========================
   // CHAT SYSTEM
   // =========================
 

@@ -69,4 +69,10 @@ export class GroupsGateway {
   handleUserPromotedEvent(payload: any) {
       this.server.to(payload.groupId).emit('user_promoted', payload);
   }
+
+  @OnEvent('group_deleted')
+  handleGroupDeletedEvent(payload: { groupId: string }) {
+    // Notify everyone in the group that it has been deleted
+    this.server.to(payload.groupId).emit('group_deleted', payload);
+  }
 }

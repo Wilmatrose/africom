@@ -187,6 +187,7 @@ export class GroupsService {
       inviteLink: group.inviteLink,
       lockGroup: (group as any).lockGroup || false, 
       disappearingTimer: (group as any).disappearingTimer || 0,
+      creatorId: group.creatorId,
       members,
     };
   }
@@ -366,6 +367,37 @@ export class GroupsService {
 
     await this.messageRepo.delete({ groupId });
     this.eventEmitter.emit('chat_cleared', { groupId });
+
+    return { success: true };
+  }
+
+  // =========================
+  // DELETE GROUP (OWNER ONLY)
+  // =========================
+  async deleteGroup(groupId: string, userId: string) {
+    // 1. Find Group and Verify Ownership
+    const group = await this.groupRepo.findOne({ where: { id: groupId } });
+    
+    if (!group) {
+      throw new NotFoundException('Group not found');
+    }
+
+    if (group.creatorId !== userId) {
+      throw new ForbiddenException('Only the group creator can delete the group');
+    }
+
+    // 2. Manual Cascade Deletion
+    // Delete all messages in the group
+    await this.messageRepo.delete({ groupId });
+    
+    // Delete all members
+    await this.memberRepo.delete({ groupId });
+
+    // Delete the group itself
+    await this.groupRepo.remove(group);
+
+    // 3. Emit Socket Event
+    this.eventEmitter.emit('group_deleted', { groupId });
 
     return { success: true };
   }
