@@ -1,25 +1,26 @@
 import { Module, Global } from '@nestjs/common';
 import { MulterModule } from '@nestjs/platform-express';
-import { MulterOptions } from '@nestjs/platform-express/multer/interfaces/multer-options.interface';
 import * as multer from 'multer';
 
 import { FilesController } from './controllers/files.controller';
 import { FilesService } from './services/files.service';
 
-@Global() // IMPORTANT: Makes FilesService globally available
+@Global()
 @Module({
   imports: [
     MulterModule.register({
-      // FIX: Explicitly define options to avoid compilation/runtime mismatch
       storage: multer.memoryStorage(),
       limits: {
         fileSize: 100 * 1024 * 1024, // 100MB limit
       },
+      // ✅ FIXED LOGIC:
       fileFilter: (req, file, cb) => {
-        if (!file.originalname.match(/\.(jpg|jpeg|png|gif|mp4|mov)$/i)) {
-          return cb(null, false);
+        // Check if the extension matches jpg, jpeg, png, or gif
+        if (file.originalname.match(/\.(jpg|jpeg|png|gif)$/i)) {
+          cb(null, true); // ALLOW the file
+        } else {
+          cb(new Error('Unsupported file type'), false); // REJECT the file
         }
-        cb(new Error('Unsupported file type'), false);
       },
     }),
   ],
