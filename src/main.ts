@@ -60,16 +60,17 @@ async function bootstrap() {
   // CORS
   // ==================================================
   app.enableCors({
-    origin: [
-      'https://africom_static.web.app',
-      'https://africom-api.onrender.com',
-      'http://localhost:3000',
-      'http://localhost',
-      'capacitor://localhost',
-    ],
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    credentials: true,
-  });
+  origin: [
+    'https://africom-social.web.app',
+    'https://africom_static.web.app',
+    'https://africom-api.onrender.com',
+    'http://localhost:3000',
+    'http://localhost',
+    'capacitor://localhost',
+  ],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  credentials: true,
+});
 
   // ==================================================
   // START SERVER
