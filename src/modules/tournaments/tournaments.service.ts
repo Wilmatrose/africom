@@ -13,6 +13,7 @@ import {
   Tournament,
   GroupMessage,
   TournamentParticipant,
+  TournamentReport,
 } from './tournaments.entity';
 
 import { User } from '../users/entities/user.entity';
@@ -36,6 +37,9 @@ export class TournamentsService {
 
     @InjectRepository(TournamentParticipant)
     private readonly participantRepo: Repository<TournamentParticipant>,
+
+    @InjectRepository(TournamentReport)
+    private readonly reportRepo: Repository<TournamentReport>,
 
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
@@ -130,7 +134,7 @@ export class TournamentsService {
     if (!user) throw new BadRequestException('User not found');
 
     if (user.coinBalance < tournament.entryFeeCoins) {
-      throw new BadRequestException('Insufficient Coins');
+      throw new BadRequestException('Insufficient Funds');
     }
 
     // 1. Deduct coins
@@ -143,7 +147,7 @@ export class TournamentsService {
       amount: tournament.entryFeeCoins,
       type: TransactionType.DEBIT,
       category: TransactionCategory.TOURNAMENT_JOIN,
-      reference: `tournament-${tournament.id}`,
+      reference: `tournament-join-${tournament.id}`,
       metadata: { tournamentName: tournament.title },
       status: TransactionStatus.COMPLETED,
     });
@@ -178,12 +182,12 @@ export class TournamentsService {
   }
 
   // =========================
-  // END TOURNAMENT & PAYOUT
+  // END TOURNAMENT & PAYOUT (10% HOST, 5% PLATFORM, 85% WINNER)
   // =========================
   async endTournament(tournamentId: string, userId: string, winnerId?: string) {
     const tournament = await this.tournamentRepo.findOne({ 
       where: { id: tournamentId },
-      relations: ['participants']
+      relations: ['participants', 'host']
     });
     
     if (!tournament) throw new NotFoundException('Tournament not found');
@@ -193,20 +197,56 @@ export class TournamentsService {
     const pot = tournament.entryFeeCoins * (tournament.participants?.length || 0);
 
     if (winnerId && pot > 0) {
+      // 1. CALCULATE SPLITS
+      const hostShare = Math.floor(pot * 0.10); // 10%
+      const platformFee = Math.floor(pot * 0.05);  // 5%
+      const winnerShare = pot - hostShare - platformFee; // Remainder (85%)
+
+      // 2. PAY HOST
+      if (hostShare > 0) {
+        tournament.host.coinBalance += hostShare;
+        await this.userRepo.save(tournament.host);
+
+        await this.transactionRepo.save({
+          userId: tournament.host.id,
+          amount: hostShare,
+          type: TransactionType.CREDIT,
+          category: TransactionCategory.TOURNAMENT_HOST_REWARD, // New category or use generic
+          reference: `host-reward-${tournament.id}`,
+          status: TransactionStatus.COMPLETED,
+        });
+      }
+
+      // 3. LOG PLATFORM FEE (System Transaction)
+      if (platformFee > 0) {
+        // We log this to a system user or just keep a record. 
+        // For now, we'll log it with userId: 'SYSTEM' or similar if you have one, 
+        // otherwise we just log the transaction without a user ID (adjust entity if needed).
+        // Assuming we want to track it, let's create a transaction with the Host ID as reference for accounting.
+        await this.transactionRepo.save({
+          userId: 'SYSTEM', // Or a specific platform admin ID
+          amount: platformFee,
+          type: TransactionType.CREDIT, // Platform revenue
+          category: TransactionCategory.PLATFORM_FEE,
+          reference: `platform-fee-${tournament.id}`,
+          status: TransactionStatus.COMPLETED,
+        });
+      }
+
+      // 4. PAY WINNER
       const winner = await this.userRepo.findOne({ where: { id: winnerId } });
       if (winner) {
-        winner.coinBalance += pot;
+        winner.coinBalance += winnerShare;
         await this.userRepo.save(winner);
 
-        const tx = this.transactionRepo.create({
+        await this.transactionRepo.save({
           userId: winner.id,
-          amount: pot,
+          amount: winnerShare,
           type: TransactionType.CREDIT,
           category: TransactionCategory.TOURNAMENT_WIN,
           reference: `win-${tournament.id}`,
           status: TransactionStatus.COMPLETED,
         });
-        await this.transactionRepo.save(tx);
       }
     }
 
@@ -216,6 +256,33 @@ export class TournamentsService {
     this.eventEmitter.emit('tournament_ended', { tournamentId: tournament.id });
 
     return { success: true, winnerBalance: pot };
+  }
+
+  // =========================
+  // SUBMIT REPORT (FRAUD / ABUSE)
+  // =========================
+  async submitReport(
+    tournamentId: string,
+    reporterId: string,
+    reason: string,
+    tournamentData: any // Snapshot data passed from controller
+  ) {
+    const report = this.reportRepo.create({
+      reporterId,
+      tournamentId,
+      tournamentTitle: tournamentData.title,
+      hostId: tournamentData.hostId,
+      hostUsername: tournamentData.hostUsername,
+      reason,
+      status: 'PENDING',
+    });
+
+    await this.reportRepo.save(report);
+    
+    // Ideally, emit an event for Admin Dashboard to show a new notification
+    // this.eventEmitter.emit('new_report', report);
+    
+    return { success: true, message: 'Report submitted for review.' };
   }
 
   // =========================
@@ -328,7 +395,21 @@ export class TournamentsService {
     return savedMessage;
   }
 
-  async getMessages(groupId: string) {
+  async getMessages(groupId: string, currentUserId: string) {
+    // Security Check
+    const tournament = await this.tournamentRepo.findOne({ where: { id: groupId } });
+    if (!tournament) throw new BadRequestException('Tournament not found');
+
+    if (tournament.hostId !== currentUserId) {
+      const isParticipant = await this.participantRepo.exists({
+        where: { tournamentId: groupId, userId: currentUserId },
+      });
+      
+      if (!isParticipant) {
+        throw new ForbiddenException('Access Denied: Join tournament to view chat.');
+      }
+    }
+
     return this.messageRepo.find({
       where: { groupId },
       order: { createdAt: 'ASC' },

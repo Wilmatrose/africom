@@ -6,11 +6,12 @@ import { Community, CommunityPost, CommunityParticipant, CommunityPostReaction }
 import { User } from '../users/entities/user.entity';
 import { Transaction } from '../wallet/wallet.entity';
 
-// Import CommonModule explicitly
+// Import CommonModule explicitly to access FilesService
 import { CommonModule } from '../../common/common.module';
 
 @Module({
   imports: [
+    // 1. Register Entities for Database Access
     TypeOrmModule.forFeature([
       Community, 
       CommunityPost, 
@@ -19,9 +20,13 @@ import { CommonModule } from '../../common/common.module';
       User,
       Transaction 
     ]),
-    CommonModule, // <--- Import CommonModule here
+    
+    // 2. Import CommonModule to get access to FilesService (for image uploads)
+    CommonModule, 
   ],
   controllers: [CommunitiesController],
   providers: [CommunitiesService],
+  // 3. Export Service if other modules need to use community logic
+  exports: [CommunitiesService],
 })
 export class CommunitiesModule {}

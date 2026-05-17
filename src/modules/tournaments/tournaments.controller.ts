@@ -9,6 +9,7 @@ import {
   Patch, 
   Delete,
   UseInterceptors, 
+  BadRequestException,
   UploadedFile 
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -35,7 +36,7 @@ export class TournamentsController {
     @Body() body: { 
       title: string; 
       fee: number;
-      maxParticipants?: number; // ✅ NEW: Accept maxParticipants
+      maxParticipants?: number; 
     },
     @Req() req: any
   ) {
@@ -97,11 +98,13 @@ export class TournamentsController {
     return this.tournamentsService.kickParticipant(id, targetUserId, req.user.id);
   }
 
+  // --- GET MESSAGES (SECURITY CHECK) ---
   @Get('messages/:groupId')
-  async getMessages(@Param('groupId') groupId: string) {
-    return this.tournamentsService.getMessages(groupId);
+  async getMessages(@Param('groupId') groupId: string, @Req() req: any) {
+    return this.tournamentsService.getMessages(groupId, req.user.id);
   }
 
+  // --- SEND MESSAGE ---
   @Post('message')
   async sendMessage(
     @Body() body: { 
@@ -115,6 +118,28 @@ export class TournamentsController {
       req.user.id, 
       req.user.username, 
       body.content
+    );
+  }
+
+  // --- REPORT TOURNAMENT ---
+  @Post(':id/report')
+  async reportTournament(
+    @Param('id') id: string,
+    @Body() body: { reason: string },
+    @Req() req: any
+  ) {
+    // Fetch tournament details to pass as snapshot data
+    // This ensures the report has context even if the tournament is deleted later
+    const tournaments = await this.tournamentsService.getTournaments();
+    const tournament = tournaments.find((t: any) => t.id === id);
+
+    if (!tournament) throw new BadRequestException('Tournament not found');
+
+    return this.tournamentsService.submitReport(
+      id,
+      req.user.id,
+      body.reason,
+      tournament
     );
   }
 }

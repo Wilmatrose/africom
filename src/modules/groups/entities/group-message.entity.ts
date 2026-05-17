@@ -1,6 +1,7 @@
 import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, CreateDateColumn, OneToMany } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { Group } from './group.entity';
+import { GroupMessageReaction } from './group-message-reaction.entity';
 
 @Entity()
 export class GroupMessage {
@@ -22,7 +23,7 @@ export class GroupMessage {
   @Column({ default: false })
   isPinned: boolean;
 
-  // --- NEW: Reply Feature ---
+  // --- Reply Feature ---
   @Column({ nullable: true })
   replyToId: string;
 
@@ -32,7 +33,12 @@ export class GroupMessage {
 
   @OneToMany(() => GroupMessage, message => message.replyTo)
   replies: GroupMessage[];
-  // --------------------------
+  // ----------------------
+
+  // --- Reaction Feature (NEW) ---
+  @OneToMany(() => GroupMessageReaction, reaction => reaction.message, { cascade: true })
+  reactions: GroupMessageReaction[];
+  // ------------------------------
 
   @ManyToOne(() => Group)
   @JoinColumn({ name: 'groupId' })

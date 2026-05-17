@@ -184,4 +184,19 @@ export class GroupsController {
   ) {
     return this.groupsService.clearGroupChat(groupId, req.user.id);
   }
+
+
+    // =========================
+  // REACTIONS
+  // =========================
+
+  @Post(':id/messages/:messageId/reactions')
+  async toggleReaction(
+    @Param('id') groupId: string,
+    @Param('messageId') messageId: string,
+    @Body() body: { emoji: string },
+    @Req() req: any,
+  ) {
+    return this.groupsService.toggleReaction(groupId, messageId, req.user.id, body.emoji);
+  }
 }

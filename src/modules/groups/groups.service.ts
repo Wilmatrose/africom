@@ -5,8 +5,9 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Group } from './entities/group.entity';
 import { GroupMember, GroupMemberRole } from './entities/group-member.entity';
 import { GroupMessage } from './entities/group-message.entity';
+import { GroupMessageReaction } from './entities/group-message-reaction.entity'; // IMPORT NEW
 import { Notification } from '../notifications/notification.entity';
-import { FilesService } from '../../common/services/files.service'; // IMPORT CLOUDINARY SERVICE
+import { FilesService } from '../../common/services/files.service';
 import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
@@ -15,15 +16,13 @@ export class GroupsService {
     @InjectRepository(Group) private readonly groupRepo: Repository<Group>,
     @InjectRepository(GroupMember) private readonly memberRepo: Repository<GroupMember>,
     @InjectRepository(GroupMessage) private readonly messageRepo: Repository<GroupMessage>,
+    @InjectRepository(GroupMessageReaction) private readonly reactionRepo: Repository<GroupMessageReaction>, // INJECT NEW
     @InjectRepository(Notification) private readonly notifRepo: Repository<Notification>,
     private dataSource: DataSource,
     private readonly eventEmitter: EventEmitter2,
-    private readonly filesService: FilesService, // INJECT CLOUDINARY SERVICE
+    private readonly filesService: FilesService,
   ) {}
 
-  // =========================
-  // HELPER: SECURITY SANITIZATION
-  // =========================
   private sanitizeUser(user: any) {
     if (!user) return null;
     return {
@@ -35,12 +34,71 @@ export class GroupsService {
   }
 
   // =========================
+  // REACTIONS SYSTEM (UPDATED)
+  // =========================
+  async toggleReaction(groupId: string, messageId: string, userId: string, emoji: string) {
+    // 1. Verify User is a member
+    const member = await this.memberRepo.findOne({ where: { groupId, userId } });
+    if (!member) throw new ForbiddenException('You are not a member of this group');
+
+    // 2. Verify Message exists
+    const message = await this.messageRepo.findOne({ where: { id: messageId, groupId } });
+    if (!message) throw new NotFoundException('Message not found');
+
+    // 3. Validate Emoji (NEW)
+    if (!GroupMessageReaction.ALLOWED_EMOJIS.includes(emoji)) {
+      throw new BadRequestException('Invalid reaction emoji');
+    }
+
+    // 4. Check if reaction already exists
+    const existingReaction = await this.reactionRepo.findOne({
+      where: { messageId, userId, emoji }
+    });
+
+    let actionType: 'added' | 'removed';
+
+    if (existingReaction) {
+      // If exists, remove it (Toggle off)
+      await this.reactionRepo.remove(existingReaction);
+      actionType = 'removed';
+    } else {
+      // If not, add it (Toggle on)
+      const newReaction = this.reactionRepo.create({ messageId, userId, emoji });
+      await this.reactionRepo.save(newReaction);
+      actionType = 'added';
+    }
+
+    // 5. Fetch updated reactions list for the message to send back
+    const updatedReactions = await this.reactionRepo.find({
+      where: { messageId },
+      relations: ['user']
+    });
+
+    const payload = {
+      groupId,
+      messageId,
+      emoji,
+      userId,
+      action: actionType,
+      reactions: updatedReactions.map(r => ({
+        emoji: r.emoji,
+        userId: r.userId,
+        username: r.user.username
+      }))
+    };
+
+    // 6. Emit Socket Event
+    this.eventEmitter.emit('message_reaction_updated', payload);
+    
+    return payload;
+  }
+
+  // =========================
   // CREATE (WITH CLOUDINARY UPLOAD)
   // =========================
   async create(name: string, description: string, creatorId: string, file?: Express.Multer.File) {
     let fileUrl: string | undefined;
 
-    // ✅ FIX: Upload to Cloudinary if file exists
     if (file) {
       fileUrl = await this.filesService.uploadImage(file);
     }
@@ -53,7 +111,7 @@ export class GroupsService {
         name, 
         description, 
         creatorId, 
-        imageUrl: fileUrl, // Save Cloudinary URL
+        imageUrl: fileUrl, 
         inviteLink: uuidv4().split('-')[0],
       });
       const savedGroup = await queryRunner.manager.save(group);
@@ -74,41 +132,18 @@ export class GroupsService {
     }
   }
 
-  // =========================
-  // JOIN BY NAME
-  // =========================
   async joinByName(userId: string, groupName: string) {
-    const group = await this.groupRepo.findOne({ 
-      where: { name: ILike(groupName) } 
-    });
+    const group = await this.groupRepo.findOne({ where: { name: ILike(groupName) } });
+    if (!group) throw new NotFoundException(`Group '${groupName}' not found.`);
+    const existingMember = await this.memberRepo.findOne({ where: { groupId: group.id, userId } });
+    if (existingMember) return group;
 
-    if (!group) {
-      throw new NotFoundException(`Group '${groupName}' not found.`);
-    }
-
-    const existingMember = await this.memberRepo.findOne({ 
-      where: { groupId: group.id, userId } 
-    });
-    
-    if (existingMember) {
-      return group;
-    }
-
-    const newMember = this.memberRepo.create({ 
-      groupId: group.id, 
-      userId, 
-      role: GroupMemberRole.MEMBER 
-    });
+    const newMember = this.memberRepo.create({ groupId: group.id, userId, role: GroupMemberRole.MEMBER });
     await this.memberRepo.save(newMember);
-
     this.eventEmitter.emit('group_joined', { group, userId });
-
     return group;
   }
 
-  // =========================
-  // JOIN (Via Invite Link)
-  // =========================
   async join(userId: string, inviteLink: string) {
     const group = await this.groupRepo.findOne({ where: { inviteLink } });
     if (!group) throw new BadRequestException('Invalid invite link');
@@ -119,56 +154,29 @@ export class GroupsService {
     return this.findById(group.id);
   }
   
-  // =========================
-  // FIND ALL
-  // =========================
   async findAll() { 
-    const groups = await this.groupRepo.find({ 
-      order: { createdAt: 'DESC' }, 
-      relations: ['creator'] 
-    });
-
-    return groups.map(g => ({
-      ...g,
-      creator: this.sanitizeUser(g.creator)
-    }));
+    const groups = await this.groupRepo.find({ order: { createdAt: 'DESC' }, relations: ['creator'] });
+    return groups.map(g => ({ ...g, creator: this.sanitizeUser(g.creator) }));
   }
 
   async findJoined(userId: string) {
     const memberships = await this.memberRepo.find({ where: { userId }, relations: ['group', 'group.creator'] });
-    return memberships.map(m => ({
-      ...m.group,
-      creator: this.sanitizeUser(m.group.creator)
-    }));
+    return memberships.map(m => ({ ...m.group, creator: this.sanitizeUser(m.group.creator) }));
   }
 
   async findById(id: string) { 
     const group = await this.groupRepo.findOne({ where: { id }, relations: ['creator', 'members', 'members.user'] });
     if (!group) return null;
-    
     (group as any).creator = this.sanitizeUser(group.creator);
-    
     if (group.members) {
-      (group as any).members = group.members.map(m => ({
-        ...m,
-        user: this.sanitizeUser(m.user)
-      }));
+      (group as any).members = group.members.map(m => ({ ...m, user: this.sanitizeUser(m.user) }));
     }
-    
     return group;
   }
 
-  // =========================
-  // GROUP DETAILS & SETTINGS
-  // =========================
-
   async getGroupDetails(groupId: string, userId: string) {
-    const group = await this.groupRepo.findOne({
-      where: { id: groupId },
-      relations: ['members', 'members.user'],
-    });
+    const group = await this.groupRepo.findOne({ where: { id: groupId }, relations: ['members', 'members.user'] });
     if (!group) throw new NotFoundException('Group not found');
-
     const isMember = group.members.some(m => m.userId === userId);
     if (!isMember) throw new ForbiddenException('You are not a member');
 
@@ -194,21 +202,13 @@ export class GroupsService {
 
   async updateGroup(groupId: string, userId: string, updates: any) {
     const member = await this.memberRepo.findOne({ where: { groupId, userId } });
-    if (!member || member.role !== GroupMemberRole.ADMIN) {
-      throw new ForbiddenException('Only admins can update settings');
-    }
-
+    if (!member || member.role !== GroupMemberRole.ADMIN) throw new ForbiddenException('Only admins can update settings');
     const group = await this.findById(groupId);
     if (!group) throw new NotFoundException('Group not found');
 
-    // ✅ FIX: Handle Image Upload
-    if (updates.file) {
-      group.imageUrl = await this.filesService.uploadImage(updates.file);
-    }
-
+    if (updates.file) group.imageUrl = await this.filesService.uploadImage(updates.file);
     if (updates.name) group.name = updates.name;
     if (updates.description !== undefined) group.description = updates.description;
-    // Note: file property is handled above, ignored here if passed in updates object
     if (updates.lockGroup !== undefined) (group as any).lockGroup = updates.lockGroup;
     if (updates.disappearingTimer !== undefined) (group as any).disappearingTimer = updates.disappearingTimer;
 
@@ -220,10 +220,8 @@ export class GroupsService {
   async resetInviteLink(groupId: string, userId: string) {
     const member = await this.memberRepo.findOne({ where: { groupId, userId } });
     if (!member || member.role !== GroupMemberRole.ADMIN) throw new ForbiddenException('Only admins can reset link');
-    
     const group = await this.findById(groupId);
     if(!group) throw new NotFoundException('Group not found');
-    
     group.inviteLink = uuidv4().split('-')[0];
     return this.groupRepo.save(group);
   }
@@ -237,25 +235,22 @@ export class GroupsService {
     if (!member) throw new ForbiddenException('Not a member');
     
     let imageUrl: string | undefined;
-
-    // ✅ FIX: Upload chat image to Cloudinary
-    if (file) {
-      imageUrl = await this.filesService.uploadImage(file);
-    }
+    if (file) imageUrl = await this.filesService.uploadImage(file);
     
     const message = this.messageRepo.create({ 
       groupId, 
       senderId, 
       content, 
-      imageUrl, // Save Cloudinary URL
+      imageUrl, 
       replyToId: replyToId || null
     });
     
     const savedMessage = await this.messageRepo.save(message);
     
+    // Fetch with relations including reactions (empty array initially)
     const fullMessage = await this.messageRepo.findOne({ 
         where: { id: savedMessage.id }, 
-        relations: ['sender', 'replyTo', 'replyTo.sender'] 
+        relations: ['sender', 'replyTo', 'replyTo.sender', 'reactions'] 
     });
     
     if (fullMessage) {
@@ -270,17 +265,24 @@ export class GroupsService {
   }
 
   async getMessages(groupId: string) {
+    // Fetch messages with reactions
     const messages = await this.messageRepo.find({ 
       where: { groupId }, 
-      relations: ['sender', 'replyTo', 'replyTo.sender'], 
+      relations: ['sender', 'replyTo', 'replyTo.sender', 'reactions'], // Added 'reactions'
       order: { createdAt: 'ASC' } 
     });
 
     return messages.map(msg => {
       (msg as any).sender = this.sanitizeUser(msg.sender);
-      if (msg.replyTo) {
-         (msg.replyTo as any).sender = this.sanitizeUser((msg.replyTo as any).sender);
-      }
+      if (msg.replyTo) (msg.replyTo as any).sender = this.sanitizeUser((msg.replyTo as any).sender);
+      
+      // Format reactions to be lightweight
+      (msg as any).reactions = msg.reactions.map(r => ({
+          emoji: r.emoji,
+          userId: r.userId,
+          username: r.user.username
+      }));
+      
       return msg;
     });
   }
@@ -295,22 +297,12 @@ export class GroupsService {
     await this.checkAdmin(groupId, userId);
     const message = await this.messageRepo.findOne({ where: { id: messageId } });
     if (!message) throw new NotFoundException('Message not found');
-    
     message.isPinned = !message.isPinned;
     const savedMsg = await this.messageRepo.save(message);
 
-    this.eventEmitter.emit('message_updated', { 
-        groupId, 
-        id: savedMsg.id, 
-        isPinned: savedMsg.isPinned 
-    });
-
+    this.eventEmitter.emit('message_updated', { groupId, id: savedMsg.id, isPinned: savedMsg.isPinned });
     return savedMsg;
   }
-
-  // =========================
-  // ADMIN ACTIONS & DELETION
-  // =========================
 
   async kickMember(groupId: string, targetUserId: string, adminId: string) {
     await this.checkAdmin(groupId, adminId);
@@ -320,7 +312,6 @@ export class GroupsService {
 
     this.eventEmitter.emit('kicked_from_group', { groupId, userId: targetUserId });
     this.eventEmitter.emit('user_kicked', { groupId, userId: targetUserId });
-
     return { success: true };
   }
 
@@ -329,15 +320,9 @@ export class GroupsService {
     const targetMember = await this.memberRepo.findOne({ where: { groupId, userId: targetUserId } });
     if (!targetMember) throw new NotFoundException('Member not found');
     targetMember.role = GroupMemberRole.ADMIN;
-    
     const savedMember = await this.memberRepo.save(targetMember);
 
-    this.eventEmitter.emit('user_promoted', { 
-        groupId, 
-        userId: targetUserId, 
-        role: 'ADMIN' 
-    });
-
+    this.eventEmitter.emit('user_promoted', { groupId, userId: targetUserId, role: 'ADMIN' });
     return savedMember;
   }
 
@@ -349,56 +334,32 @@ export class GroupsService {
     const isAdmin = member && member.role === GroupMemberRole.ADMIN;
     const isSender = message.senderId === userId;
 
-    if (!isAdmin && !isSender) {
-      throw new ForbiddenException('You cannot delete this message');
-    }
+    if (!isAdmin && !isSender) throw new ForbiddenException('You cannot delete this message');
 
     await this.messageRepo.remove(message);
     this.eventEmitter.emit('message_deleted', { groupId, messageId });
-
     return { success: true };
   }
 
   async clearGroupChat(groupId: string, userId: string) {
     const member = await this.memberRepo.findOne({ where: { groupId, userId } });
-    if (!member || member.role !== GroupMemberRole.ADMIN) {
-      throw new ForbiddenException('Only admins can clear chat history');
-    }
+    if (!member || member.role !== GroupMemberRole.ADMIN) throw new ForbiddenException('Only admins can clear chat history');
 
     await this.messageRepo.delete({ groupId });
     this.eventEmitter.emit('chat_cleared', { groupId });
-
     return { success: true };
   }
 
-  // =========================
-  // DELETE GROUP (OWNER ONLY)
-  // =========================
   async deleteGroup(groupId: string, userId: string) {
-    // 1. Find Group and Verify Ownership
     const group = await this.groupRepo.findOne({ where: { id: groupId } });
-    
-    if (!group) {
-      throw new NotFoundException('Group not found');
-    }
+    if (!group) throw new NotFoundException('Group not found');
+    if (group.creatorId !== userId) throw new ForbiddenException('Only the group creator can delete the group');
 
-    if (group.creatorId !== userId) {
-      throw new ForbiddenException('Only the group creator can delete the group');
-    }
-
-    // 2. Manual Cascade Deletion
-    // Delete all messages in the group
     await this.messageRepo.delete({ groupId });
-    
-    // Delete all members
     await this.memberRepo.delete({ groupId });
-
-    // Delete the group itself
     await this.groupRepo.remove(group);
 
-    // 3. Emit Socket Event
     this.eventEmitter.emit('group_deleted', { groupId });
-
     return { success: true };
   }
 }

@@ -21,7 +21,7 @@ export class CommunitiesService {
     @InjectRepository(CommunityParticipant)
     private participantRepo: Repository<CommunityParticipant>,
     @InjectRepository(CommunityPostReaction)
-    private reactionRepo: Repository<CommunityPostReaction>, // <--- INJECT REACTION REPO
+    private reactionRepo: Repository<CommunityPostReaction>,
     @InjectRepository(User)
     private userRepo: Repository<User>,
     @InjectRepository(Transaction)
@@ -110,8 +110,8 @@ export class CommunitiesService {
     };
   }
 
-   // ==================================================
-  // JOIN COMMUNITY (FIXED)
+  // ==================================================
+  // JOIN COMMUNITY
   // ==================================================
   async joinCommunity(communityId: string, userId: string) {
     const community = await this.communityRepo.findOne({ where: { id: communityId } });
@@ -144,9 +144,6 @@ export class CommunitiesService {
     if (!user) throw new BadRequestException('User not found');
 
     // CHECK 4: Validate Payment
-    // LOG THIS TO YOUR CONSOLE TO SEE THE VALUES
-    console.log(`Join Attempt: User Balance [${user.coinBalance}] vs Fee [${community.minCoinsToJoin}]`);
-
     if (user.coinBalance < community.minCoinsToJoin) {
       throw new BadRequestException(`Insufficient coins. Need ${community.minCoinsToJoin}, you have ${user.coinBalance}`);
     }
@@ -172,6 +169,67 @@ export class CommunitiesService {
     await this.participantRepo.save(participant);
 
     return { success: true, newBalance: user.coinBalance };
+  }
+
+  // ==================================================
+  // NEW: EXIT COMMUNITY
+  // ==================================================
+  async exitCommunity(communityId: string, userId: string) {
+    const community = await this.communityRepo.findOne({ where: { id: communityId } });
+    if (!community) throw new NotFoundException('Community not found');
+
+    // 1. Prevent Creator from exiting (they must delete or transfer)
+    if (community.creatorId === userId) {
+      throw new ForbiddenException('Creators cannot exit their own community. Please delete it instead.');
+    }
+
+    // 2. Check if user is a member
+    const participant = await this.participantRepo.findOne({ 
+      where: { communityId, userId } 
+    });
+
+    if (!participant) {
+      throw new BadRequestException('You are not a member of this community');
+    }
+
+    // 3. Remove member
+    await this.participantRepo.remove(participant);
+
+    return { success: true, message: 'Exited community successfully' };
+  }
+
+  // ==================================================
+  // NEW: UPDATE COMMUNITY
+  // ==================================================
+  async updateCommunity(
+    communityId: string, 
+    userId: string, 
+    updates: { 
+      name?: string; 
+      description?: string; 
+      minCoinsToJoin?: number; 
+      file?: Express.Multer.File 
+    }
+  ) {
+    const community = await this.communityRepo.findOne({ where: { id: communityId } });
+    
+    if (!community) throw new NotFoundException('Community not found');
+    if (community.creatorId !== userId) throw new ForbiddenException('Only the creator can update settings');
+
+    let imageUrl = community.imageUrl;
+
+    // Handle File Upload if provided
+    if (updates.file) {
+      imageUrl = await this.filesService.uploadImage(updates.file);
+    }
+
+    // Update fields
+    community.name = updates.name || community.name;
+    community.description = updates.description !== undefined ? updates.description : community.description;
+    community.minCoinsToJoin = updates.minCoinsToJoin !== undefined ? updates.minCoinsToJoin : community.minCoinsToJoin;
+    community.imageUrl = imageUrl;
+
+    return this.communityRepo.save(community);
   }
 
   // ==================================================
@@ -226,6 +284,8 @@ export class CommunitiesService {
       throw new ForbiddenException('You are not authorized to delete this community');
     }
 
+    // With cascade: ['remove'] configured in the Entity, TypeORM handles
+    // deleting related Posts, Reactions, and Participants automatically.
     await this.communityRepo.remove(community);
     
     return { message: 'Community deleted successfully' };
@@ -278,8 +338,6 @@ export class CommunitiesService {
     });
 
     // Attach reaction counts to each post
-    // Note: For very large scale, use a QueryBuilder with GROUP BY.
-    // For this app size, iterating is acceptable.
     const postsWithReactions = await Promise.all(
       posts.map(async (post) => {
         const reactions = await this.reactionRepo.find({

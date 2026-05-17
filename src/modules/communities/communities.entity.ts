@@ -17,7 +17,8 @@ export class Community {
   @Column()
   creatorId: string;
 
-  @ManyToOne(() => User)
+  // Relation to Creator
+  @ManyToOne(() => User, { onDelete: 'SET NULL' }) // If user is deleted, set creator to null
   @JoinColumn({ name: 'creatorId' })
   creator!: User;
 
@@ -36,10 +37,14 @@ export class Community {
   @CreateDateColumn()
   createdAt: Date;
 
-  @OneToMany(() => CommunityPost, post => post.community)
+  // Relation to Posts
+  // FIX: Added cascade: ['remove']. Deleting a Community will delete all its Posts.
+  @OneToMany(() => CommunityPost, post => post.community, { cascade: ['remove'] })
   posts: CommunityPost[];
 
-  @OneToMany(() => CommunityParticipant, participant => participant.community)
+  // Relation to Participants
+  // FIX: Added cascade: ['remove']. Deleting a Community will remove all Participants.
+  @OneToMany(() => CommunityParticipant, participant => participant.community, { cascade: ['remove'] })
   participants: CommunityParticipant[];
 }
 
@@ -54,7 +59,8 @@ export class CommunityParticipant {
   @Column()
   userId!: string;
 
-  @ManyToOne(() => Community, community => community.participants)
+  // Relation to Community
+  @ManyToOne(() => Community, community => community.participants, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'communityId' })
   community: Community;
 
@@ -70,7 +76,8 @@ export class CommunityPost {
   @Column()
   communityId: string;
 
-  @ManyToOne(() => Community, community => community.posts)
+  // Relation to Community
+  @ManyToOne(() => Community, community => community.posts, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'communityId' })
   community: Community;
 
@@ -89,15 +96,14 @@ export class CommunityPost {
   @CreateDateColumn()
   createdAt: Date;
 
-  // ==================================================
-  // RELATION: REACTIONS
-  // ==================================================
-  @OneToMany(() => CommunityPostReaction, reaction => reaction.post)
+  // Relation to Reactions
+  // FIX: Added cascade: ['remove']. Deleting a Post will delete all its Reactions.
+  @OneToMany(() => CommunityPostReaction, reaction => reaction.post, { cascade: ['remove'] })
   reactions: CommunityPostReaction[];
 }
 
 // ==================================================
-// NEW ENTITY: REACTIONS
+// ENTITY: REACTIONS
 // ==================================================
 @Entity('community_post_reactions')
 export class CommunityPostReaction {
@@ -117,12 +123,13 @@ export class CommunityPostReaction {
   @CreateDateColumn()
   reactedAt: Date;
 
-  // Relations
-  @ManyToOne(() => CommunityPost, post => post.reactions)
+  // Relation to Post
+  @ManyToOne(() => CommunityPost, post => post.reactions, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'postId' })
   post: CommunityPost;
 
-  @ManyToOne(() => User)
+  // Relation to User
+  @ManyToOne(() => User, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'userId' })
   user: User;
 }

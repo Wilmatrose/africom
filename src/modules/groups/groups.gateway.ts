@@ -6,7 +6,7 @@ import {
   MessageBody,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { OnEvent } from '@nestjs/event-emitter'; // Import this
+import { OnEvent } from '@nestjs/event-emitter';
 import { UseGuards } from '@nestjs/common';
 import { WsJwtGuard } from '../auth/ws-jwt.guard'; 
 
@@ -19,8 +19,6 @@ export class GroupsGateway {
   @WebSocketServer()
   server: Server;
 
-  // REMOVED Service Injection
-
   @SubscribeMessage('joinGroup')
   async handleJoinGroup(
     @ConnectedSocket() client: Socket,
@@ -30,23 +28,21 @@ export class GroupsGateway {
     console.log(`Client joined group: ${data.groupId}`);
   }
 
-  // --- EVENT HANDLERS (Bridge Service -> Socket) ---
+  // --- EVENT HANDLERS (Service -> Socket) ---
 
   @OnEvent('group_message_created')
   handleGroupMessageEvent(payload: any) {
+    // Ensure we emit to the correct room (groupId)
     this.server.to(payload.groupId).emit('newMessage', payload);
   }
 
   @OnEvent('kicked_from_group')
   handleKickedFromGroupEvent(payload: { groupId: string; userId: string }) {
-    // We emit to the group, and the client checks if it's them
-    // Or you can implement User Rooms (socket.join(user_${userId})) to send privately
     this.server.to(payload.groupId).emit('kicked_from_group', payload);
   }
 
   @OnEvent('user_kicked')
   handleUserKickedEvent(payload: { groupId: string; userId: string }) {
-    // Notify the group to remove the user and their messages
     this.server.to(payload.groupId).emit('user_kicked', payload);
   }
 
@@ -72,7 +68,13 @@ export class GroupsGateway {
 
   @OnEvent('group_deleted')
   handleGroupDeletedEvent(payload: { groupId: string }) {
-    // Notify everyone in the group that it has been deleted
     this.server.to(payload.groupId).emit('group_deleted', payload);
+  }
+
+  // --- NEW: REACTION EVENT ---
+  @OnEvent('message_reaction_updated')
+  handleReactionUpdatedEvent(payload: any) {
+    // Emit to the group so everyone sees the reaction update
+    this.server.to(payload.groupId).emit('reaction_updated', payload);
   }
 }

@@ -2,6 +2,7 @@ import {
   Controller, 
   Get, 
   Post, 
+  Patch,
   Delete,
   Body, 
   Param, 
@@ -9,6 +10,7 @@ import {
   Req, 
   UseInterceptors, 
   UploadedFile,
+  BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CommunitiesService } from './communities.service';
@@ -18,6 +20,10 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 @UseGuards(JwtAuthGuard)
 export class CommunitiesController {
   constructor(private readonly communitiesService: CommunitiesService) {}
+
+  // =========================
+  // GENERAL GETTERS
+  // =========================
 
   @Get()
   async getAll() {
@@ -29,9 +35,15 @@ export class CommunitiesController {
     return this.communitiesService.findById(id);
   }
 
+  @Get(':id/posts')
+  async getPosts(@Param('id') id: string) {
+    return this.communitiesService.getPosts(id);
+  }
+
   // =========================
-  // CREATE COMMUNITY
+  // CREATION & JOINING
   // =========================
+
   @Post('create')
   @UseInterceptors(FileInterceptor('file')) 
   async create(
@@ -63,14 +75,10 @@ export class CommunitiesController {
     );
   }
 
-  @Get(':id/posts')
-  async getPosts(@Param('id') id: string) {
-    return this.communitiesService.getPosts(id);
-  }
+  // =========================
+  // POSTING & REACTIONS
+  // =========================
 
-  // =========================
-  // CREATE POST (CREATOR ONLY)
-  // =========================
   @Post('post')
   @UseInterceptors(FileInterceptor('file'))
   async createPost(
@@ -90,9 +98,6 @@ export class CommunitiesController {
     );
   }
 
-  // =========================
-  // REACTION ENDPOINT
-  // =========================
   @Post('posts/:postId/react')
   async reactToPost(
     @Param('postId') postId: string,
@@ -107,8 +112,38 @@ export class CommunitiesController {
   }
 
   // =========================
-  // DELETE COMMUNITY
+  // COMMUNITY MANAGEMENT (UPDATE, EXIT, DELETE)
   // =========================
+
+  @Patch(':id')
+  @UseInterceptors(FileInterceptor('file'))
+  async update(
+    @Param('id') id: string,
+    @Body() body: { 
+      name?: string; 
+      description?: string; 
+      minCoinsToJoin?: number 
+    },
+    @UploadedFile() file: Express.Multer.File,
+    @Req() req: any
+  ) {
+    return this.communitiesService.updateCommunity(
+      id, 
+      req.user.id, 
+      {
+        name: body.name,
+        description: body.description,
+        minCoinsToJoin: body.minCoinsToJoin,
+        file: file
+      }
+    );
+  }
+
+  @Post(':id/exit')
+  async exit(@Param('id') id: string, @Req() req: any) {
+    return this.communitiesService.exitCommunity(id, req.user.id);
+  }
+
   @Delete(':id')
   async delete(@Param('id') id: string, @Req() req: any) {
     return this.communitiesService.deleteCommunity(id, req.user.id);

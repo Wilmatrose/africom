@@ -84,3 +84,40 @@ export class TournamentParticipant {
   @CreateDateColumn()
   joinedAt!: Date;
 }
+
+// ==================================================
+// NEW ENTITY: TOURNAMENT REPORTS
+// ==================================================
+// Stores reports for fraud/abuse. 
+// Designed to persist even if the tournament is deleted.
+// ==================================================
+@Entity('tournament_reports')
+export class TournamentReport {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column()
+  reporterId: string; // ID of the user submitting the report
+
+  // Snapshot data: Stored so we know what the tournament was even if it gets deleted
+  @Column()
+  tournamentId: string; 
+
+  @Column()
+  tournamentTitle: string;
+
+  @Column()
+  hostId: string;
+
+  @Column()
+  hostUsername: string;
+
+  @Column({ type: 'text', nullable: true })
+  reason: string; // The complaint details
+
+  @Column({ default: 'PENDING' })
+  status: string; // PENDING, RESOLVED, DISMISSED
+
+  @CreateDateColumn()
+  createdAt: Date;
+}
