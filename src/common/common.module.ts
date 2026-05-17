@@ -13,13 +13,15 @@ import { FilesService } from './services/files.service';
       limits: {
         fileSize: 100 * 1024 * 1024, // 100MB limit
       },
-      // ✅ FIXED LOGIC:
+      // ==================================================
+      // FIXED LOGIC: Added Video Extensions (mp4, mov, webm)
+      // ==================================================
       fileFilter: (req, file, cb) => {
-        // Check if the extension matches jpg, jpeg, png, or gif
-        if (file.originalname.match(/\.(jpg|jpeg|png|gif)$/i)) {
+        // Allow images and videos
+        if (file.originalname.match(/\.(jpg|jpeg|png|gif|mp4|mov|webm)$/i)) {
           cb(null, true); // ALLOW the file
         } else {
-          cb(new Error('Unsupported file type'), false); // REJECT the file
+          cb(new Error('Unsupported file type. Only JPG, PNG, GIF, MP4, MOV, WEBM allowed.'), false); // REJECT the file
         }
       },
     }),

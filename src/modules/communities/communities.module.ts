@@ -5,6 +5,10 @@ import { CommunitiesController } from './communities.controller';
 import { Community, CommunityPost, CommunityParticipant } from './communities.entity';
 import { User } from '../users/entities/user.entity';
 import { Transaction } from '../wallet/wallet.entity';
+
+// Import CommonModule explicitly
+import { CommonModule } from '../../common/common.module';
+
 @Module({
   imports: [
     TypeOrmModule.forFeature([
@@ -12,11 +16,11 @@ import { Transaction } from '../wallet/wallet.entity';
       CommunityPost, 
       CommunityParticipant, 
       User,
-      Transaction // Required for wallet access
-    ])
+      Transaction 
+    ]),
+    CommonModule, // <--- Import CommonModule here
   ],
   controllers: [CommunitiesController],
   providers: [CommunitiesService],
-  
 })
 export class CommunitiesModule {}
