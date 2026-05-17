@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CommunitiesService } from './communities.service';
 import { CommunitiesController } from './communities.controller';
-import { Community, CommunityPost, CommunityParticipant } from './communities.entity';
+import { Community, CommunityPost, CommunityParticipant, CommunityPostReaction } from './communities.entity';
 import { User } from '../users/entities/user.entity';
 import { Transaction } from '../wallet/wallet.entity';
 
@@ -15,6 +15,7 @@ import { CommonModule } from '../../common/common.module';
       Community, 
       CommunityPost, 
       CommunityParticipant, 
+      CommunityPostReaction,
       User,
       Transaction 
     ]),

@@ -70,9 +70,6 @@ export class CommunityPost {
   @Column()
   communityId: string;
 
-  // ==================================================
-  // RELATION: A post must belong to a community
-  // ==================================================
   @ManyToOne(() => Community, community => community.posts)
   @JoinColumn({ name: 'communityId' })
   community: Community;
@@ -86,13 +83,46 @@ export class CommunityPost {
   @Column({ type: 'text', nullable: true })
   textContent: string;
 
-  // ==================================================
-  // MEDIA URL
-  // Supports Images or Videos hosted on Cloudinary
-  // ==================================================
   @Column({ nullable: true })
   mediaUrl: string; 
 
   @CreateDateColumn()
   createdAt: Date;
+
+  // ==================================================
+  // RELATION: REACTIONS
+  // ==================================================
+  @OneToMany(() => CommunityPostReaction, reaction => reaction.post)
+  reactions: CommunityPostReaction[];
+}
+
+// ==================================================
+// NEW ENTITY: REACTIONS
+// ==================================================
+@Entity('community_post_reactions')
+export class CommunityPostReaction {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column()
+  postId: string;
+
+  @Column()
+  userId: string;
+
+  // Stores the emoji character, e.g., "❤️", "👍"
+  @Column({ type: 'varchar', length: 10 })
+  emoji: string;
+
+  @CreateDateColumn()
+  reactedAt: Date;
+
+  // Relations
+  @ManyToOne(() => CommunityPost, post => post.reactions)
+  @JoinColumn({ name: 'postId' })
+  post: CommunityPost;
+
+  @ManyToOne(() => User)
+  @JoinColumn({ name: 'userId' })
+  user: User;
 }

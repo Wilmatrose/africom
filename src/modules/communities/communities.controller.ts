@@ -72,7 +72,7 @@ export class CommunitiesController {
   // CREATE POST (CREATOR ONLY)
   // =========================
   @Post('post')
-  @UseInterceptors(FileInterceptor('file')) // Handle file upload here
+  @UseInterceptors(FileInterceptor('file'))
   async createPost(
     @UploadedFile() file: Express.Multer.File,
     @Body() body: { 
@@ -86,7 +86,23 @@ export class CommunitiesController {
       req.user.id,
       req.user.username,
       body.text,
-      file // Pass file (image or video) to service
+      file
+    );
+  }
+
+  // =========================
+  // REACTION ENDPOINT
+  // =========================
+  @Post('posts/:postId/react')
+  async reactToPost(
+    @Param('postId') postId: string,
+    @Body() body: { emoji: string },
+    @Req() req: any
+  ) {
+    return this.communitiesService.toggleReaction(
+      postId,
+      req.user.id,
+      body.emoji,
     );
   }
 

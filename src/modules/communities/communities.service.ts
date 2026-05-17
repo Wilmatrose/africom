@@ -1,7 +1,7 @@
 import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Community, CommunityPost, CommunityParticipant } from './communities.entity';
+import { Community, CommunityPost, CommunityParticipant, CommunityPostReaction } from './communities.entity';
 import { User } from '../users/entities/user.entity';
 import { 
   Transaction, 
@@ -20,6 +20,8 @@ export class CommunitiesService {
     private postRepo: Repository<CommunityPost>,
     @InjectRepository(CommunityParticipant)
     private participantRepo: Repository<CommunityParticipant>,
+    @InjectRepository(CommunityPostReaction)
+    private reactionRepo: Repository<CommunityPostReaction>, // <--- INJECT REACTION REPO
     @InjectRepository(User)
     private userRepo: Repository<User>,
     @InjectRepository(Transaction)
@@ -43,7 +45,6 @@ export class CommunitiesService {
 
     let imageUrl: string | undefined;
 
-    // Upload to Cloudinary if file exists
     if (file) {
       imageUrl = await this.filesService.uploadImage(file);
     }
@@ -103,34 +104,58 @@ export class CommunitiesService {
       createdAt: community.createdAt,
       creator: community.creator ? {
         id: community.creator.id,
-        username: community.creator.username, // FIXED TYPO (was c.creator.username)
-        avatarUrl: community.creator.avatarUrl, // FIXED TYPO (was c.creator.avatarUrl)
+        username: community.creator.username,
+        avatarUrl: community.creator.avatarUrl,
       } : null,
     };
   }
 
-  // ==================================================
-  // JOIN COMMUNITY
+   // ==================================================
+  // JOIN COMMUNITY (FIXED)
   // ==================================================
   async joinCommunity(communityId: string, userId: string) {
     const community = await this.communityRepo.findOne({ where: { id: communityId } });
     if (!community) throw new BadRequestException('Community not found');
 
-    const existing = await this.participantRepo.findOne({ where: { communityId, userId } });
-    if (existing) return { message: 'Already a member' };
+    // CHECK 1: Is the user the Creator?
+    // Creators do not need to pay to join their own community.
+    if (community.creatorId === userId) {
+      console.log(`User ${userId} is the creator. Allowing free access.`);
+      
+      // Check if they are already in the participant list (soft join)
+      const existing = await this.participantRepo.findOne({ where: { communityId, userId } });
+      if (!existing) {
+        const participant = this.participantRepo.create({ communityId, userId });
+        await this.participantRepo.save(participant);
+      }
+      
+      return { success: true, newBalance: 'N/A (Creator)', message: 'Welcome back, Creator' };
+    }
 
+    // CHECK 2: Is the user already a member?
+    const existing = await this.participantRepo.findOne({ where: { communityId, userId } });
+    if (existing) {
+      console.log(`User ${userId} is already a member.`);
+      return { message: 'Already a member' };
+    }
+
+    // CHECK 3: Fetch User
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new BadRequestException('User not found');
 
+    // CHECK 4: Validate Payment
+    // LOG THIS TO YOUR CONSOLE TO SEE THE VALUES
+    console.log(`Join Attempt: User Balance [${user.coinBalance}] vs Fee [${community.minCoinsToJoin}]`);
+
     if (user.coinBalance < community.minCoinsToJoin) {
-      throw new BadRequestException(`Need ${community.minCoinsToJoin} coins to join`);
+      throw new BadRequestException(`Insufficient coins. Need ${community.minCoinsToJoin}, you have ${user.coinBalance}`);
     }
 
-    // Deduct Coins
+    // DEDUCT COINS
     user.coinBalance -= community.minCoinsToJoin;
     await this.userRepo.save(user);
 
-    // Log Transaction
+    // LOG TRANSACTION
     const tx = this.transactionRepo.create({
       userId: user.id,
       amount: community.minCoinsToJoin,
@@ -142,7 +167,7 @@ export class CommunitiesService {
     });
     await this.transactionRepo.save(tx);
 
-    // Create Participant
+    // CREATE PARTICIPANT
     const participant = this.participantRepo.create({ communityId, userId });
     await this.participantRepo.save(participant);
 
@@ -162,18 +187,13 @@ export class CommunitiesService {
     const community = await this.communityRepo.findOne({ where: { id: communityId } });
     if (!community) throw new BadRequestException('Community not found');
 
-    // ==================================================
-    // STRICT CHECK: ONLY CREATOR CAN POST
-    // ==================================================
     if (community.creatorId !== authorId) {
       throw new ForbiddenException('Only the community creator can post.');
     }
 
     let mediaUrl: string | undefined;
 
-    // Upload Media (Image or Video) if provided
     if (file) {
-      // Simple check: if mimetype starts with video, upload as video, else image
       if (file.mimetype.startsWith('video/')) {
         mediaUrl = await this.filesService.uploadVideo(file);
       } else {
@@ -202,24 +222,90 @@ export class CommunitiesService {
       throw new NotFoundException('Community not found');
     }
 
-    // Security Check: Only the creator can delete
     if (community.creatorId !== userId) {
       throw new ForbiddenException('You are not authorized to delete this community');
     }
 
-    // TypeORM cascading deletes will handle posts/participants if configured in entity
     await this.communityRepo.remove(community);
     
     return { message: 'Community deleted successfully' };
   }
 
   // ==================================================
-  // GET POSTS
+  // REACTION LOGIC
+  // ==================================================
+  async toggleReaction(postId: string, userId: string, emoji: string) {
+    // 1. Check if post exists
+    const post = await this.postRepo.findOne({ where: { id: postId } });
+    if (!post) throw new NotFoundException('Post not found');
+
+    // 2. Check if user has already reacted to this post
+    const existingReaction = await this.reactionRepo.findOne({
+      where: { postId, userId },
+    });
+
+    if (existingReaction) {
+      // Case A: User clicked the SAME emoji -> Remove reaction (Toggle off)
+      if (existingReaction.emoji === emoji) {
+        await this.reactionRepo.remove(existingReaction);
+        return { action: 'removed', emoji: null };
+      } 
+      // Case B: User clicked a DIFFERENT emoji -> Update reaction
+      else {
+        existingReaction.emoji = emoji;
+        await this.reactionRepo.save(existingReaction);
+        return { action: 'updated', emoji: emoji };
+      }
+    } else {
+      // Case C: User has not reacted yet -> Create new reaction
+      const newReaction = this.reactionRepo.create({
+        postId,
+        userId,
+        emoji,
+      });
+      await this.reactionRepo.save(newReaction);
+      return { action: 'added', emoji: emoji };
+    }
+  }
+
+  // ==================================================
+  // GET POSTS (WITH REACTION COUNTS)
   // ==================================================
   async getPosts(communityId: string) {
-    return this.postRepo.find({ 
+    const posts = await this.postRepo.find({ 
       where: { communityId }, 
       order: { createdAt: 'DESC' } 
     });
+
+    // Attach reaction counts to each post
+    // Note: For very large scale, use a QueryBuilder with GROUP BY.
+    // For this app size, iterating is acceptable.
+    const postsWithReactions = await Promise.all(
+      posts.map(async (post) => {
+        const reactions = await this.reactionRepo.find({
+          where: { postId: post.id },
+          select: ['emoji'], // Only fetch emoji to save bandwidth
+        });
+
+        // Count occurrences of each emoji
+        const counts = reactions.reduce((acc, reaction) => {
+          acc[reaction.emoji] = (acc[reaction.emoji] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>);
+
+        // Convert to array format for frontend: [{ emoji: "❤️", count: 5 }, ...]
+        const reactionList = Object.keys(counts).map((emoji) => ({
+          emoji,
+          count: counts[emoji],
+        }));
+
+        return {
+          ...post,
+          reactions: reactionList,
+        };
+      }),
+    );
+
+    return postsWithReactions;
   }
 }
