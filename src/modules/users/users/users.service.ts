@@ -7,7 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import { User, UserRole, KYCStatus } from '../entities/user.entity';
-import { FilesService } from '../../../../src/common/services/files.service'; // IMPORT CLOUDINARY SERVICE
+import { FilesService } from '../../../common/services/files.service'; // IMPORT CLOUDINARY SERVICE
 
 @Injectable()
 export class UsersService {
