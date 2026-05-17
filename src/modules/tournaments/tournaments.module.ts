@@ -3,9 +3,13 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { TournamentsService } from './tournaments.service';
 import { TournamentsController } from './tournaments.controller';
-import { Tournament, GroupMessage, TournamentParticipant, TournamentReport } from './tournaments.entity';
+import { 
+  Tournament, 
+  GroupMessage, 
+  TournamentParticipant, 
+  TournamentReport // <--- 1. Ensure this is imported
+} from './tournaments.entity';
 import { User } from '../users/entities/user.entity';
-// Import the Transaction Entity
 import { Transaction } from '../wallet/wallet.entity';
 
 @Module({
@@ -14,11 +18,10 @@ import { Transaction } from '../wallet/wallet.entity';
       Tournament, 
       GroupMessage, 
       TournamentParticipant, 
-      TournamentReport,
+      TournamentReport, // <--- 2. Add it here
       User,
-      Transaction // Registered here
+      Transaction 
     ]),
-    // NO WalletModule or TransactionService import
   ],
   controllers: [TournamentsController],
   providers: [TournamentsService],
