@@ -3,7 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { TournamentsService } from './tournaments.service';
 import { TournamentsController } from './tournaments.controller';
-import { Tournament, GroupMessage, TournamentParticipant } from './tournaments.entity';
+import { Tournament, GroupMessage, TournamentParticipant, TournamentReport } from './tournaments.entity';
 import { User } from '../users/entities/user.entity';
 // Import the Transaction Entity
 import { Transaction } from '../wallet/wallet.entity';
@@ -14,6 +14,7 @@ import { Transaction } from '../wallet/wallet.entity';
       Tournament, 
       GroupMessage, 
       TournamentParticipant, 
+      TournamentReport,
       User,
       Transaction // Registered here
     ]),
