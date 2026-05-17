@@ -18,45 +18,42 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { MessagingModule } from './modules/messaging/messaging.module';
 
 // ==================================================
-// NEW: Import CommonModule for File Uploads (Cloudinary)
+// COMMON MODULE (Cloudinary / File Uploads)
 // ==================================================
 import { CommonModule } from './common/common.module';
 
 @Module({
   imports: [
+    // 1. Configuration
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
     }),
 
+    // 2. Database (PostgreSQL on Render)
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         type: 'postgres',
-        
         // Connects using the URL from Render Environment Variables
         url: config.get<string>('DATABASE_URL'), 
-        
         // Required for Render PostgreSQL
         ssl: {
           rejectUnauthorized: false,
         },
-
         autoLoadEntities: true,
-        
         // ✅ ENABLED: This creates the database tables automatically
         synchronize: true, 
-        
         logging: process.env.NODE_ENV !== 'production',
       }),
     }),
 
-    // ==================================================
-    // ADDED: CommonModule
-    // ==================================================
+    // 3. CommonModule (Cloudinary / File Uploads)
+    // NOTE: Ensure CommonModule has the @Global() decorator in common/common.module.ts
     CommonModule,
 
+    // 4. Feature Modules
     UsersModule,
     WalletModule,
     PaymentsModule,
@@ -69,6 +66,8 @@ import { CommonModule } from './common/common.module';
     GroupsModule,
     NotificationsModule,
     MessagingModule,
+
+    // 5. Global Event Emitter (Websockets)
     EventEmitterModule.forRoot()
   ],
 })
