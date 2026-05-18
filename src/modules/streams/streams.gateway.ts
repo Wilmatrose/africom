@@ -1,10 +1,11 @@
 import { WebSocketGateway, WebSocketServer, SubscribeMessage, OnGatewayDisconnect } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { StreamsService } from './streams.service';
+import { Logger } from '@nestjs/common';
 
 @WebSocketGateway({ 
   cors: { 
-    origin: '*', // Adjust this for production to allow only your frontend URL
+    origin: '*', 
     methods: ['GET', 'POST']
   } 
 })
@@ -12,29 +13,36 @@ export class StreamsGateway implements OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
+  private readonly logger = new Logger(StreamsGateway.name);
+
   constructor(private readonly streamsService: StreamsService) {}
 
-  // 1. HANDLE USER JOINING
   @SubscribeMessage('join_stream')
   async handleJoin(client: Socket, payload: { streamId: string }) {
     const { streamId } = payload;
 
-    if (!streamId) return;
+    if (!streamId) {
+      this.logger.warn(`Join attempt without streamId from client ${client.id}`);
+      return;
+    }
 
-    // Attach streamId to the socket object so we know where they were if they disconnect
-    client.data.streamId = streamId;
-    
-    // Join the specific "room" for this stream (useful for chat later)
-    client.join(streamId);
+    try {
+      client.data.streamId = streamId;
+      client.join(streamId);
 
-    // Update DB: Viewers + 1
-    const newCount = await this.streamsService.incrementViewers(streamId);
+      const newCount = await this.streamsService.incrementViewers(streamId);
 
-    // Broadcast the new count to EVERYONE in this stream's room
-    this.server.to(streamId).emit('viewer_update', { streamId, count: newCount });
+      this.logger.debug(`Client ${client.id} joined stream ${streamId}. Count: ${newCount}`);
+
+      this.server.to(streamId).emit('viewer_update', { streamId, count: newCount });
+      
+    } catch (error: unknown) {
+      // FIX: Properly handle unknown error type
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      this.logger.error(`Error joining stream ${streamId}: ${errorMessage}`);
+    }
   }
 
-  // 2. HANDLE USER LEAVING VOLUNTARILY
   @SubscribeMessage('leave_stream')
   async handleLeave(client: Socket, payload: { streamId: string }) {
     const { streamId } = payload;
@@ -43,23 +51,23 @@ export class StreamsGateway implements OnGatewayDisconnect {
     }
   }
 
-  // 3. HANDLE DISCONNECT (App Close / Network Loss)
   async handleDisconnect(client: Socket) {
-    // If the user was in a stream, we need to remove them
     if (client.data.streamId) {
+      this.logger.debug(`Client ${client.id} disconnected from stream ${client.data.streamId}`);
       await this.removeViewer(client, client.data.streamId);
     }
   }
 
-  // PRIVATE HELPER: Logic to remove viewer and update DB
   private async removeViewer(client: Socket, streamId: string) {
-    // Leave the socket room
-    client.leave(streamId);
-
-    // Update DB: Viewers - 1
-    const newCount = await this.streamsService.decrementViewers(streamId);
-
-    // Broadcast the new count to everyone else
-    this.server.to(streamId).emit('viewer_update', { streamId, count: newCount });
+    try {
+      client.leave(streamId);
+      const newCount = await this.streamsService.decrementViewers(streamId);
+      this.server.to(streamId).emit('viewer_update', { streamId, count: newCount });
+      
+    } catch (error: unknown) {
+      // FIX: Properly handle unknown error type
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      this.logger.error(`Error removing viewer from stream ${streamId}: ${errorMessage}`);
+    }
   }
 }

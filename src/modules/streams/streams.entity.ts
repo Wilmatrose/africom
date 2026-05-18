@@ -1,5 +1,5 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
-import { User } from '../users/entities/user.entity'; // Adjust path to your User entity
+import { User } from '../users/entities/user.entity'; 
 
 @Entity('live_sessions')
 export class LiveSession {
@@ -9,18 +9,16 @@ export class LiveSession {
   @Column()
   creatorId: string;
 
-  // REMOVED: creatorName (We will get this from the User relation)
-  // REMOVED: thumbnailUrl (We will get avatar from the User relation)
-
   @Column()
   platform: 'YOUTUBE' | 'TWITCH' | 'TIKTOK';
 
-  // The clean ID extracted from the URL (e.g., "dQw4w9WgXcQ" or "emergency_gadgets")
-  @Column()
+  // FIX: Changed to 'text' to accommodate full URLs for TikTok short links
+  // Previously, this might have been a varchar(255) which could cut off long URLs.
+  @Column({ type: 'text' })
   platformStreamId: string; 
 
-  // NEW: The full URL pasted by the creator
-  @Column({ nullable: true })
+  // The full URL pasted by the creator (useful for frontend if ID isn't enough)
+  @Column({ type: 'text', nullable: true })
   streamUrl: string;
 
   @Column({ default: false })
@@ -29,15 +27,13 @@ export class LiveSession {
   @Column({ nullable: true })
   title: string;
 
-  // === NEW ADDITION FOR VIEWERS ===
   @Column({ default: 0 })
   viewers: number;
-  // ================================
 
   @CreateDateColumn()
   startedAt: Date;
 
-  // OPTIONAL: Relation to easily fetch user data (recommended)
+  // Relation to fetch creator details (username, avatar) automatically
   @ManyToOne(() => User)
   @JoinColumn({ name: 'creatorId' })
   creator: User;
