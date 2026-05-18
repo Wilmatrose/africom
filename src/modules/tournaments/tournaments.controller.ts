@@ -26,6 +26,15 @@ export class TournamentsController {
     return this.tournamentsService.getTournaments();
   }
 
+  // ==================================================
+  // NEW: GET SINGLE TOURNAMENT BY ID
+  // Used by TournamentRoomPage to get participant details (Usernames/Avatars)
+  // ==================================================
+  @Get(':id')
+  async getOne(@Param('id') id: string) {
+    return this.tournamentsService.findById(id);
+  }
+
   // =========================
   // CREATE TOURNAMENT (With Image Upload)
   // =========================
@@ -129,7 +138,6 @@ export class TournamentsController {
     @Req() req: any
   ) {
     // Fetch tournament details to pass as snapshot data
-    // This ensures the report has context even if the tournament is deleted later
     const tournaments = await this.tournamentsService.getTournaments();
     const tournament = tournaments.find((t: any) => t.id === id);
 

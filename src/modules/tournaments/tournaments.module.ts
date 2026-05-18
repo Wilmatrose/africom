@@ -7,7 +7,7 @@ import {
   Tournament, 
   GroupMessage, 
   TournamentParticipant, 
-  TournamentReport // <--- 1. Ensure this is imported
+  TournamentReport 
 } from './tournaments.entity';
 import { User } from '../users/entities/user.entity';
 import { Transaction } from '../wallet/wallet.entity';
@@ -18,9 +18,9 @@ import { Transaction } from '../wallet/wallet.entity';
       Tournament, 
       GroupMessage, 
       TournamentParticipant, 
-      TournamentReport, // <--- 2. Add it here
-      User,
-      Transaction 
+      TournamentReport, // Required for the Report Entity
+      User,             // Required for relations (Host/Participant User data)
+      Transaction       // Required for Wallet/Payout logic
     ]),
   ],
   controllers: [TournamentsController],

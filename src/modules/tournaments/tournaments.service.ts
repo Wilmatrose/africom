@@ -52,7 +52,7 @@ export class TournamentsService {
   ) {}
 
   // =========================
-  // CREATE (WITH CLOUDINARY UPLOAD)
+  // CREATE (STRICT SIZE VALIDATION)
   // =========================
   async createTournament(
     hostId: string,
@@ -61,8 +61,15 @@ export class TournamentsService {
     fee: number,
     maxParticipants?: number, 
   ) {
-    let bracketImageUrl: string | null = null;
+    // FIX: Enforce Power of 2 sizes (4, 8, 16, 32)
+    const validSizes = [4, 8, 16, 32];
+    const size = maxParticipants || 8;
 
+    if (!validSizes.includes(size)) {
+      throw new BadRequestException('Tournament size must be 4, 8, 16, or 32');
+    }
+
+    let bracketImageUrl: string | null = null;
     if (file) {
       bracketImageUrl = await this.filesService.uploadImage(file);
     }
@@ -72,7 +79,7 @@ export class TournamentsService {
       title,
       bracketImageUrl: bracketImageUrl,
       entryFeeCoins: fee,
-      maxParticipants: maxParticipants || 16,
+      maxParticipants: size,
       status: 'SCHEDULED',
     });
 
@@ -80,14 +87,12 @@ export class TournamentsService {
   }
 
   // =========================
-  // GET ALL (ENRICHED WITH HOST DATA)
+  // GET ALL
   // =========================
   async getTournaments() {
     const tournaments = await this.tournamentRepo.find({
       relations: ['host', 'participants'], 
-      order: {
-        createdAt: 'DESC',
-      },
+      order: { createdAt: 'DESC' },
     });
 
     return tournaments.map(t => ({
@@ -107,8 +112,59 @@ export class TournamentsService {
     }));
   }
 
+  // ==================================================
+  // NEW: FIND BY ID (Secure Participant Data)
+  // ==================================================
+  async findById(id: string) {
+    // 1. Fetch Tournament with relations
+    // Note: 'participants.user' requires the User relation in TournamentParticipant entity
+    const tournament = await this.tournamentRepo.findOne({
+      where: { id },
+      relations: ['host', 'participants', 'participants.user'], 
+    });
+
+    if (!tournament) throw new NotFoundException('Tournament not found');
+
+    // 2. Map participants with Username/Avatar (Safe Display)
+    const participants = tournament.participants.map(p => ({
+      userId: p.userId,
+      username: p.user?.username ?? 'Unknown User',
+      avatarUrl: p.user?.avatarUrl ?? null,
+      joinedAt: p.joinedAt,
+    }));
+
+    // 3. Inject Host into participants list if missing
+    const isHostInList = participants.some(p => p.userId === tournament.hostId);
+
+    if (!isHostInList && tournament.hostId) {
+      participants.push({
+        userId: tournament.hostId,
+        username: tournament.host?.username ?? 'Host',
+        avatarUrl: tournament.host?.avatarUrl ?? null,
+        joinedAt: tournament.createdAt,
+      });
+    }
+
+    return {
+      id: tournament.id,
+      title: tournament.title,
+      status: tournament.status,
+      entryFeeCoins: tournament.entryFeeCoins,
+      maxParticipants: tournament.maxParticipants,
+      createdAt: tournament.createdAt,
+      hostId: tournament.hostId,
+      creator: tournament.host ? {
+        id: tournament.host.id,
+        username: tournament.host.username,
+        avatarUrl: tournament.host.avatarUrl,
+      } : null,
+      // Return the secure list
+      participants: participants,
+    };
+  }
+
   // =========================
-  // JOIN (PAYMENT LOGIC + CAPACITY CHECK)
+  // JOIN (LOCK WHEN FULL)
   // =========================
   async joinTournament(tournamentId: string, userId: string) {
     const tournament = await this.tournamentRepo.findOne({
@@ -119,9 +175,19 @@ export class TournamentsService {
     if (!tournament) throw new BadRequestException('Tournament not found');
     if (tournament.status !== 'SCHEDULED') throw new BadRequestException('Tournament already started');
 
-    // Check Capacity
+    // CHECK 1: Is the user the Host? (Free Entry)
+    if (tournament.hostId === userId) {
+      const existing = await this.participantRepo.findOne({ where: { tournamentId, userId } });
+      if (!existing) {
+        const participant = this.participantRepo.create({ tournamentId, userId });
+        await this.participantRepo.save(participant);
+      }
+      return { success: true, newBalance: 'N/A (Host)', message: 'Welcome back, Host' };
+    }
+
+    // CHECK 2: Capacity Lock
     if (tournament.participants.length >= tournament.maxParticipants) {
-      throw new BadRequestException('Tournament is full');
+      throw new BadRequestException('Tournament is full. No slots left.');
     }
 
     const existingParticipant = await this.participantRepo.findOne({
@@ -161,17 +227,28 @@ export class TournamentsService {
   }
 
   // =========================
-  // START TOURNAMENT (HOST ONLY)
+  // START TOURNAMENT (MANUAL & STRICT)
   // =========================
   async startTournament(tournamentId: string, userId: string) {
-    const tournament = await this.tournamentRepo.findOne({ where: { id: tournamentId } });
+    const tournament = await this.tournamentRepo.findOne({ 
+      where: { id: tournamentId },
+      relations: ['participants'] 
+    });
+
     if (!tournament) throw new NotFoundException('Tournament not found');
     
     if (tournament.hostId !== userId) throw new ForbiddenException('Only the host can start');
     if (tournament.status !== 'SCHEDULED') throw new BadRequestException('Tournament cannot be started');
 
+    // FIX: Enforce Full Capacity before Starting
+    if (tournament.participants.length !== tournament.maxParticipants) {
+      throw new BadRequestException(`Tournament is not full. Need ${tournament.maxParticipants} players, have ${tournament.participants.length}.`);
+    }
+
     tournament.status = 'LIVE';
     await this.tournamentRepo.save(tournament);
+
+    // TODO: Generate Bracket Matches here in future step
 
     this.eventEmitter.emit('tournament_started', { 
       tournamentId: tournament.id, 
@@ -182,7 +259,7 @@ export class TournamentsService {
   }
 
   // =========================
-  // END TOURNAMENT & PAYOUT (10% HOST, 5% PLATFORM, 85% WINNER)
+  // END TOURNAMENT & PAYOUT
   // =========================
   async endTournament(tournamentId: string, userId: string, winnerId?: string) {
     const tournament = await this.tournamentRepo.findOne({ 
@@ -197,10 +274,10 @@ export class TournamentsService {
     const pot = tournament.entryFeeCoins * (tournament.participants?.length || 0);
 
     if (winnerId && pot > 0) {
-      // 1. CALCULATE SPLITS
-      const hostShare = Math.floor(pot * 0.10); // 10%
-      const platformFee = Math.floor(pot * 0.05);  // 5%
-      const winnerShare = pot - hostShare - platformFee; // Remainder (85%)
+      // 1. CALCULATE SPLITS (10% Host, 5% Platform, 85% Winner)
+      const hostShare = Math.floor(pot * 0.10); 
+      const platformFee = Math.floor(pot * 0.05);  
+      const winnerShare = pot - hostShare - platformFee; 
 
       // 2. PAY HOST
       if (hostShare > 0) {
@@ -211,22 +288,18 @@ export class TournamentsService {
           userId: tournament.host.id,
           amount: hostShare,
           type: TransactionType.CREDIT,
-          category: TransactionCategory.TOURNAMENT_HOST_REWARD, // New category or use generic
+          category: TransactionCategory.TOURNAMENT_HOST_REWARD, 
           reference: `host-reward-${tournament.id}`,
           status: TransactionStatus.COMPLETED,
         });
       }
 
-      // 3. LOG PLATFORM FEE (System Transaction)
+      // 3. LOG PLATFORM FEE
       if (platformFee > 0) {
-        // We log this to a system user or just keep a record. 
-        // For now, we'll log it with userId: 'SYSTEM' or similar if you have one, 
-        // otherwise we just log the transaction without a user ID (adjust entity if needed).
-        // Assuming we want to track it, let's create a transaction with the Host ID as reference for accounting.
         await this.transactionRepo.save({
-          userId: 'SYSTEM', // Or a specific platform admin ID
+          userId: 'SYSTEM', 
           amount: platformFee,
-          type: TransactionType.CREDIT, // Platform revenue
+          type: TransactionType.CREDIT, 
           category: TransactionCategory.PLATFORM_FEE,
           reference: `platform-fee-${tournament.id}`,
           status: TransactionStatus.COMPLETED,
@@ -259,13 +332,13 @@ export class TournamentsService {
   }
 
   // =========================
-  // SUBMIT REPORT (FRAUD / ABUSE)
+  // SUBMIT REPORT
   // =========================
   async submitReport(
     tournamentId: string,
     reporterId: string,
     reason: string,
-    tournamentData: any // Snapshot data passed from controller
+    tournamentData: any 
   ) {
     const report = this.reportRepo.create({
       reporterId,
@@ -278,15 +351,11 @@ export class TournamentsService {
     });
 
     await this.reportRepo.save(report);
-    
-    // Ideally, emit an event for Admin Dashboard to show a new notification
-    // this.eventEmitter.emit('new_report', report);
-    
     return { success: true, message: 'Report submitted for review.' };
   }
 
   // =========================
-  // CANCEL TOURNAMENT (HOST ONLY, REFUND ALL)
+  // CANCEL TOURNAMENT
   // =========================
   async cancelTournament(tournamentId: string, userId: string) {
     const tournament = await this.tournamentRepo.findOne({ 
@@ -324,7 +393,7 @@ export class TournamentsService {
   }
 
   // =========================
-  // KICK PARTICIPANT (HOST ONLY, REFUND ONE)
+  // KICK PARTICIPANT
   // =========================
   async kickParticipant(tournamentId: string, targetUserId: string, hostId: string) {
     const tournament = await this.tournamentRepo.findOne({
@@ -389,14 +458,12 @@ export class TournamentsService {
     });
 
     const savedMessage = await this.messageRepo.save(message);
-    
     this.eventEmitter.emit('tournament_message', savedMessage);
     
     return savedMessage;
   }
 
   async getMessages(groupId: string, currentUserId: string) {
-    // Security Check
     const tournament = await this.tournamentRepo.findOne({ where: { id: groupId } });
     if (!tournament) throw new BadRequestException('Tournament not found');
 

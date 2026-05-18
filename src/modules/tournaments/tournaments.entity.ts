@@ -81,6 +81,14 @@ export class TournamentParticipant {
   @JoinColumn({ name: 'tournamentId' })
   tournament!: Tournament;
 
+  // ==================================================
+  // FIX: ADD RELATION TO USER
+  // This allows the Service to access participant.user.username
+  // ==================================================
+  @ManyToOne(() => User, { eager: false })
+  @JoinColumn({ name: 'userId' })
+  user: User;
+
   @CreateDateColumn()
   joinedAt!: Date;
 }
@@ -88,18 +96,14 @@ export class TournamentParticipant {
 // ==================================================
 // NEW ENTITY: TOURNAMENT REPORTS
 // ==================================================
-// Stores reports for fraud/abuse. 
-// Designed to persist even if the tournament is deleted.
-// ==================================================
 @Entity('tournament_reports')
 export class TournamentReport {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
   @Column()
-  reporterId: string; // ID of the user submitting the report
+  reporterId: string; 
 
-  // Snapshot data: Stored so we know what the tournament was even if it gets deleted
   @Column()
   tournamentId: string; 
 
@@ -113,10 +117,10 @@ export class TournamentReport {
   hostUsername: string;
 
   @Column({ type: 'text', nullable: true })
-  reason: string; // The complaint details
+  reason: string; 
 
   @Column({ default: 'PENDING' })
-  status: string; // PENDING, RESOLVED, DISMISSED
+  status: string; 
 
   @CreateDateColumn()
   createdAt: Date;
