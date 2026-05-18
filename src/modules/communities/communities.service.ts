@@ -85,30 +85,34 @@ export class CommunitiesService {
   }
 
   // ==================================================
-  // FIND BY ID (UPDATED FOR CREATOR ACCESS FIX)
+  // FIND BY ID (UPDATED: Secure Participant Data + Creator Access)
   // ==================================================
   async findById(id: string) {
+    // 1. Fetch Community with Creator, Participants, AND Participant User Data
     const community = await this.communityRepo.findOne({
       where: { id },
-      relations: ['creator', 'participants'], 
+      relations: ['creator', 'participants', 'participants.user'], 
     });
 
     if (!community) throw new NotFoundException('Community not found');
 
-    // 1. Map existing participants from DB
+    // 2. Map existing participants with Username/Avatar (Safe Display)
     const participants = community.participants.map(p => ({
       userId: p.userId,
+      username: p.user?.username ?? 'Unknown User',
+      avatarUrl: p.user?.avatarUrl ?? null,
       joinedAt: p.joinedAt,
     }));
 
-    // 2. FIX: Inject Creator into participants list if missing.
-    // This ensures the Frontend knows the Creator has access without needing to pay/join.
+    // 3. Inject Creator into participants list if missing
     const isCreatorInList = participants.some(p => p.userId === community.creatorId);
 
     if (!isCreatorInList && community.creatorId) {
       participants.push({
         userId: community.creatorId,
-        joinedAt: community.createdAt, // Use community creation time
+        username: community.creator?.username ?? 'Host',
+        avatarUrl: community.creator?.avatarUrl ?? null,
+        joinedAt: community.createdAt,
       });
     }
 
@@ -124,7 +128,7 @@ export class CommunitiesService {
         username: community.creator.username,
         avatarUrl: community.creator.avatarUrl,
       } : null,
-      // Return the modified list including the creator
+      // Return the secure list with usernames
       participants: participants,
     };
   }
@@ -137,11 +141,9 @@ export class CommunitiesService {
     if (!community) throw new BadRequestException('Community not found');
 
     // CHECK 1: Is the user the Creator?
-    // Creators do not need to pay to join their own community.
     if (community.creatorId === userId) {
       console.log(`User ${userId} is the creator. Allowing free access.`);
       
-      // Ensure they are in the participant table (optional, but good for consistency)
       const existing = await this.participantRepo.findOne({ where: { communityId, userId } });
       if (!existing) {
         const participant = this.participantRepo.create({ communityId, userId });

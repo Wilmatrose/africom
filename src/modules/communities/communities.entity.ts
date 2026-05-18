@@ -18,7 +18,7 @@ export class Community {
   creatorId: string;
 
   // Relation to Creator
-  @ManyToOne(() => User, { onDelete: 'SET NULL' }) // If user is deleted, set creator to null
+  @ManyToOne(() => User, { onDelete: 'SET NULL' }) 
   @JoinColumn({ name: 'creatorId' })
   creator!: User;
 
@@ -38,12 +38,10 @@ export class Community {
   createdAt: Date;
 
   // Relation to Posts
-  // FIX: Added cascade: ['remove']. Deleting a Community will delete all its Posts.
   @OneToMany(() => CommunityPost, post => post.community, { cascade: ['remove'] })
   posts: CommunityPost[];
 
   // Relation to Participants
-  // FIX: Added cascade: ['remove']. Deleting a Community will remove all Participants.
   @OneToMany(() => CommunityParticipant, participant => participant.community, { cascade: ['remove'] })
   participants: CommunityParticipant[];
 }
@@ -63,6 +61,14 @@ export class CommunityParticipant {
   @ManyToOne(() => Community, community => community.participants, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'communityId' })
   community: Community;
+
+  // ==================================================
+  // FIX: ADD RELATION TO USER
+  // This allows the Service to access participant details (username, avatar)
+  // ==================================================
+  @ManyToOne(() => User, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'userId' })
+  user: User;
 
   @CreateDateColumn()
   joinedAt!: Date;
@@ -97,14 +103,10 @@ export class CommunityPost {
   createdAt: Date;
 
   // Relation to Reactions
-  // FIX: Added cascade: ['remove']. Deleting a Post will delete all its Reactions.
   @OneToMany(() => CommunityPostReaction, reaction => reaction.post, { cascade: ['remove'] })
   reactions: CommunityPostReaction[];
 }
 
-// ==================================================
-// ENTITY: REACTIONS
-// ==================================================
 @Entity('community_post_reactions')
 export class CommunityPostReaction {
   @PrimaryGeneratedColumn('uuid')
