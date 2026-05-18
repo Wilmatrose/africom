@@ -27,12 +27,19 @@ export class TournamentsController {
   }
 
   // ==================================================
-  // NEW: GET SINGLE TOURNAMENT BY ID
-  // Used by TournamentRoomPage to get participant details (Usernames/Avatars)
+  // GET SINGLE TOURNAMENT BY ID
   // ==================================================
   @Get(':id')
   async getOne(@Param('id') id: string) {
     return this.tournamentsService.findById(id);
+  }
+
+  // ==================================================
+  // NEW: GET TOURNAMENT MATCHES (BRACKET)
+  // ==================================================
+  @Get(':id/matches')
+  async getMatches(@Param('id') id: string) {
+    return this.tournamentsService.getMatches(id);
   }
 
   // =========================
@@ -69,7 +76,7 @@ export class TournamentsController {
     );
   }
 
-  // --- START TOURNAMENT ---
+  // --- START TOURNAMENT (Generates Bracket) ---
   @Patch(':id/start')
   async startTournament(
     @Param('id') id: string,
@@ -86,6 +93,35 @@ export class TournamentsController {
     @Req() req: any
   ) {
     return this.tournamentsService.endTournament(id, req.user.id, body.winnerId);
+  }
+
+  // ==================================================
+  // NEW: REPORT MATCH RESULT (Player or Host)
+  // ==================================================
+  @Post('matches/:matchId/report')
+  async reportMatchResult(
+    @Param('matchId') matchId: string,
+    @Body() body: { winnerId: string, score?: string },
+    @Req() req: any
+  ) {
+    return this.tournamentsService.reportMatchResult(
+      matchId, 
+      body.winnerId, 
+      body.score, 
+      req.user.id
+    );
+  }
+
+  // ==================================================
+  // NEW: SET MATCH WINNER (Host Only - Override)
+  // ==================================================
+  @Patch('matches/:matchId/winner')
+  async setMatchWinner(
+    @Param('matchId') matchId: string,
+    @Body() body: { winnerId: string },
+    @Req() req: any
+  ) {
+    return this.tournamentsService.setMatchWinner(matchId, body.winnerId, req.user.id);
   }
 
   // --- CANCEL TOURNAMENT (HOST ONLY) ---
@@ -137,7 +173,6 @@ export class TournamentsController {
     @Body() body: { reason: string },
     @Req() req: any
   ) {
-    // Fetch tournament details to pass as snapshot data
     const tournaments = await this.tournamentsService.getTournaments();
     const tournament = tournaments.find((t: any) => t.id === id);
 

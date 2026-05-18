@@ -34,6 +34,10 @@ export class Tournament {
   @OneToMany(() => TournamentParticipant, (participant) => participant.tournament)
   participants!: TournamentParticipant[];
 
+  // NEW: Relation to Matches (Bracket)
+  @OneToMany(() => TournamentMatch, (match) => match.tournament)
+  matches!: TournamentMatch[];
+
   @CreateDateColumn()
   createdAt: Date;
 }
@@ -81,10 +85,7 @@ export class TournamentParticipant {
   @JoinColumn({ name: 'tournamentId' })
   tournament!: Tournament;
 
-  // ==================================================
-  // FIX: ADD RELATION TO USER
-  // This allows the Service to access participant.user.username
-  // ==================================================
+  // RELATION: Link to User
   @ManyToOne(() => User, { eager: false })
   @JoinColumn({ name: 'userId' })
   user: User;
@@ -94,8 +95,55 @@ export class TournamentParticipant {
 }
 
 // ==================================================
-// NEW ENTITY: TOURNAMENT REPORTS
+// NEW ENTITY: TOURNAMENT MATCHES (BRACKET LOGIC)
 // ==================================================
+@Entity('tournament_matches')
+export class TournamentMatch {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column()
+  tournamentId: string;
+
+  @Column()
+  round: number; // e.g., 1 for First Round, 2 for Semi-Finals, 3 for Finals
+
+  @Column()
+  matchNumber: number; // Order within the round (Match 1, Match 2...)
+
+  @Column()
+  player1Id: string;
+
+  @Column({ nullable: true })
+  player2Id: string; // Nullable in case of "Bye" or odd numbers (though we enforce even)
+
+  @Column({ nullable: true })
+  winnerId: string; // The ID of the user who won
+
+  @Column({ nullable: true })
+  score: string; // e.g., "2-1"
+
+  @Column({ type: 'enum', enum: ['PENDING', 'LIVE', 'COMPLETED'], default: 'PENDING' })
+  status: string;
+
+  // RELATIONS
+  @ManyToOne(() => Tournament, (tournament) => tournament.matches)
+  @JoinColumn({ name: 'tournamentId' })
+  tournament: Tournament;
+
+  @ManyToOne(() => User)
+  @JoinColumn({ name: 'player1Id' })
+  player1: User;
+
+  @ManyToOne(() => User)
+  @JoinColumn({ name: 'player2Id' })
+  player2: User;
+
+  @ManyToOne(() => User)
+  @JoinColumn({ name: 'winnerId' })
+  winner: User;
+}
+
 @Entity('tournament_reports')
 export class TournamentReport {
   @PrimaryGeneratedColumn('uuid')
