@@ -1,11 +1,11 @@
 import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, ILike } from 'typeorm';
+import { Repository, DataSource, ILike, SelectQueryBuilder } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Group } from './entities/group.entity';
 import { GroupMember, GroupMemberRole } from './entities/group-member.entity';
 import { GroupMessage } from './entities/group-message.entity';
-import { GroupMessageReaction } from './entities/group-message-reaction.entity'; // IMPORT NEW
+import { GroupMessageReaction } from './entities/group-message-reaction.entity';
 import { Notification } from '../notifications/notification.entity';
 import { FilesService } from '../../common/services/files.service';
 import { v4 as uuidv4 } from 'uuid';
@@ -16,7 +16,7 @@ export class GroupsService {
     @InjectRepository(Group) private readonly groupRepo: Repository<Group>,
     @InjectRepository(GroupMember) private readonly memberRepo: Repository<GroupMember>,
     @InjectRepository(GroupMessage) private readonly messageRepo: Repository<GroupMessage>,
-    @InjectRepository(GroupMessageReaction) private readonly reactionRepo: Repository<GroupMessageReaction>, // INJECT NEW
+    @InjectRepository(GroupMessageReaction) private readonly reactionRepo: Repository<GroupMessageReaction>,
     @InjectRepository(Notification) private readonly notifRepo: Repository<Notification>,
     private dataSource: DataSource,
     private readonly eventEmitter: EventEmitter2,
@@ -34,23 +34,19 @@ export class GroupsService {
   }
 
   // =========================
-  // REACTIONS SYSTEM (UPDATED)
+  // REACTIONS SYSTEM
   // =========================
   async toggleReaction(groupId: string, messageId: string, userId: string, emoji: string) {
-    // 1. Verify User is a member
     const member = await this.memberRepo.findOne({ where: { groupId, userId } });
     if (!member) throw new ForbiddenException('You are not a member of this group');
 
-    // 2. Verify Message exists
     const message = await this.messageRepo.findOne({ where: { id: messageId, groupId } });
     if (!message) throw new NotFoundException('Message not found');
 
-    // 3. Validate Emoji (NEW)
     if (!GroupMessageReaction.ALLOWED_EMOJIS.includes(emoji)) {
       throw new BadRequestException('Invalid reaction emoji');
     }
 
-    // 4. Check if reaction already exists
     const existingReaction = await this.reactionRepo.findOne({
       where: { messageId, userId, emoji }
     });
@@ -58,20 +54,18 @@ export class GroupsService {
     let actionType: 'added' | 'removed';
 
     if (existingReaction) {
-      // If exists, remove it (Toggle off)
       await this.reactionRepo.remove(existingReaction);
       actionType = 'removed';
     } else {
-      // If not, add it (Toggle on)
       const newReaction = this.reactionRepo.create({ messageId, userId, emoji });
       await this.reactionRepo.save(newReaction);
       actionType = 'added';
     }
 
-    // 5. Fetch updated reactions list for the message to send back
+    // Fetch updated reactions with user data efficiently
     const updatedReactions = await this.reactionRepo.find({
       where: { messageId },
-      relations: ['user']
+      relations: ['user'] // Ensure user is loaded
     });
 
     const payload = {
@@ -83,22 +77,20 @@ export class GroupsService {
       reactions: updatedReactions.map(r => ({
         emoji: r.emoji,
         userId: r.userId,
-        username: r.user.username
+        username: r.user?.username ?? 'Unknown'
       }))
     };
 
-    // 6. Emit Socket Event
     this.eventEmitter.emit('message_reaction_updated', payload);
     
     return payload;
   }
 
   // =========================
-  // CREATE (WITH CLOUDINARY UPLOAD)
+  // CREATE
   // =========================
   async create(name: string, description: string, creatorId: string, file?: Express.Multer.File) {
     let fileUrl: string | undefined;
-
     if (file) {
       fileUrl = await this.filesService.uploadImage(file);
     }
@@ -175,17 +167,21 @@ export class GroupsService {
   }
 
   async getGroupDetails(groupId: string, userId: string) {
-    const group = await this.groupRepo.findOne({ where: { id: groupId }, relations: ['members', 'members.user'] });
+    // Optimized: Select specific fields to avoid fetching heavy user data for all members
+    const group = await this.groupRepo.findOne({ 
+      where: { id: groupId }, 
+      relations: ['members'] // Don't need full user object for all members here
+    });
+    
     if (!group) throw new NotFoundException('Group not found');
-    const isMember = group.members.some(m => m.userId === userId);
-    if (!isMember) throw new ForbiddenException('You are not a member');
+    
+    // Check membership efficiently
+    const myMembership = await this.memberRepo.findOne({ 
+      where: { groupId, userId },
+      relations: ['user'] // Load only MY user data
+    });
 
-    const members = group.members.map(m => ({
-      id: m.user.id,
-      username: m.user.username,
-      avatarUrl: m.user.avatarUrl,
-      role: m.role,
-    }));
+    if (!myMembership) throw new ForbiddenException('You are not a member');
 
     return {
       id: group.id,
@@ -196,15 +192,29 @@ export class GroupsService {
       lockGroup: (group as any).lockGroup || false, 
       disappearingTimer: (group as any).disappearingTimer || 0,
       creatorId: group.creatorId,
-      members,
+      // Return minimal member list (frontend usually uses separate endpoint for full list)
+      // or map just the count
+      memberCount: group.members.length,
+      // Return current user's specific info
+      me: {
+        id: myMembership.userId,
+        username: myMembership.user.username,
+        avatarUrl: myMembership.user.avatarUrl,
+        role: myMembership.role
+      }
     };
   }
 
   async updateGroup(groupId: string, userId: string, updates: any) {
     const member = await this.memberRepo.findOne({ where: { groupId, userId } });
     if (!member || member.role !== GroupMemberRole.ADMIN) throw new ForbiddenException('Only admins can update settings');
-    const group = await this.findById(groupId);
-    if (!group) throw new NotFoundException('Group not found');
+    
+    // Use findById to get existing data
+    const groupEntity = await this.findById(groupId);
+    if (!groupEntity) throw new NotFoundException('Group not found');
+
+    // Re-fetch as entity to save
+    const group = await this.groupRepo.findOne({ where: { id: groupId } });
 
     if (updates.file) group.imageUrl = await this.filesService.uploadImage(updates.file);
     if (updates.name) group.name = updates.name;
@@ -220,14 +230,14 @@ export class GroupsService {
   async resetInviteLink(groupId: string, userId: string) {
     const member = await this.memberRepo.findOne({ where: { groupId, userId } });
     if (!member || member.role !== GroupMemberRole.ADMIN) throw new ForbiddenException('Only admins can reset link');
-    const group = await this.findById(groupId);
+    const group = await this.groupRepo.findOne({ where: { id: groupId } });
     if(!group) throw new NotFoundException('Group not found');
     group.inviteLink = uuidv4().split('-')[0];
     return this.groupRepo.save(group);
   }
 
   // =========================
-  // CHAT SYSTEM (WITH CLOUDINARY)
+  // CHAT SYSTEM (OPTIMIZED)
   // =========================
 
   async sendMessage(groupId: string, senderId: string, content: string, file?: Express.Multer.File, replyToId?: string) {
@@ -247,43 +257,71 @@ export class GroupsService {
     
     const savedMessage = await this.messageRepo.save(message);
     
-    // Fetch with relations including reactions (empty array initially)
-    const fullMessage = await this.messageRepo.findOne({ 
-        where: { id: savedMessage.id }, 
-        relations: ['sender', 'replyTo', 'replyTo.sender', 'reactions'] 
-    });
-    
-    if (fullMessage) {
-      (fullMessage as any).sender = this.sanitizeUser(fullMessage.sender);
-      if (fullMessage.replyTo) {
-        (fullMessage.replyTo as any).sender = this.sanitizeUser((fullMessage.replyTo as any).sender);
-      }
-    }
+    // OPTIMIZATION: Select specific fields instead of loading full heavy objects
+    const fullMessage = await this.messageRepo.createQueryBuilder('msg')
+      .leftJoinAndSelect('msg.sender', 'sender')
+      .leftJoinAndSelect('msg.replyTo', 'replyTo')
+      .leftJoinAndSelect('replyTo.sender', 'replyToSender')
+      .where('msg.id = :id', { id: savedMessage.id })
+      .select([
+        'msg.id', 'msg.content', 'msg.imageUrl', 'msg.createdAt', 'msg.replyToId',
+        'sender.id', 'sender.username', 'sender.avatarUrl',
+        'replyTo.id', 'replyTo.content', 
+        'replyToSender.id', 'replyToSender.username'
+      ])
+      .getOne();
 
     this.eventEmitter.emit('group_message_created', fullMessage);
     return fullMessage;
   }
 
-  async getMessages(groupId: string) {
-    // Fetch messages with reactions
-    const messages = await this.messageRepo.find({ 
-      where: { groupId }, 
-      relations: ['sender', 'replyTo', 'replyTo.sender', 'reactions'], // Added 'reactions'
-      order: { createdAt: 'ASC' } 
-    });
+  async getMessages(groupId: string, page: number = 1, limit: number = 50) {
+    // FIX: Added Pagination. Defaults to fetching last 50 messages.
+    // Frontend should pass page=1 for initial load.
+    const skip = (page - 1) * limit;
 
-    return messages.map(msg => {
-      (msg as any).sender = this.sanitizeUser(msg.sender);
-      if (msg.replyTo) (msg.replyTo as any).sender = this.sanitizeUser((msg.replyTo as any).sender);
+    const messages = await this.messageRepo.createQueryBuilder('msg')
+      .leftJoinAndSelect('msg.sender', 'sender')
+      .leftJoinAndSelect('msg.replyTo', 'replyTo')
+      .leftJoinAndSelect('replyTo.sender', 'replyToSender')
+      .leftJoinAndSelect('msg.reactions', 'reaction')
+      .leftJoinAndSelect('reaction.user', 'reactionUser') // FIX: Load reaction user
+      .where('msg.groupId = :groupId', { groupId })
+      .orderBy('msg.createdAt', 'DESC') // Get newest
+      .skip(skip)
+      .take(limit)
+      .select([ // OPTIMIZATION: Select ONLY required fields
+        'msg.id', 'msg.content', 'msg.imageUrl', 'msg.createdAt', 'msg.replyToId', 'msg.isPinned',
+        'sender.id', 'sender.username', 'sender.avatarUrl',
+        'replyTo.id', 'replyTo.content', 'replyTo.imageUrl',
+        'replyToSender.id', 'replyToSender.username',
+        'reaction.id', 'reaction.emoji', 'reaction.userId',
+        'reactionUser.id', 'reactionUser.username'
+      ])
+      .getMany();
+
+    // Map to clean format (and reverse for chat display order ASC)
+    return messages.reverse().map(msg => {
+      const m: any = msg;
+      m.sender = this.sanitizeUser(msg.sender);
       
-      // Format reactions to be lightweight
-      (msg as any).reactions = msg.reactions.map(r => ({
-          emoji: r.emoji,
-          userId: r.userId,
-          username: r.user.username
+      if (msg.replyTo) {
+        m.replyTo = {
+          id: msg.replyTo.id,
+          content: msg.replyTo.content,
+          imageUrl: msg.replyTo.imageUrl,
+          sender: this.sanitizeUser((msg.replyTo as any).sender) // replyToSender
+        };
+      }
+
+      // Map reactions efficiently
+      m.reactions = (msg.reactions || []).map(r => ({
+        emoji: r.emoji,
+        userId: r.userId,
+        username: (r.user as any)?.username ?? 'Unknown'
       }));
-      
-      return msg;
+
+      return m;
     });
   }
 
