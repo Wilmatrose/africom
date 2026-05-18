@@ -11,6 +11,7 @@ import {
   UseInterceptors, 
   UploadedFile,
   BadRequestException,
+  NotFoundException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CommunitiesService } from './communities.service';
@@ -32,7 +33,15 @@ export class CommunitiesController {
 
   @Get(':id')
   async getOne(@Param('id') id: string) {
-    return this.communitiesService.findById(id);
+    // FIX: Wrapped in try-catch to handle invalid IDs gracefully
+    try {
+      return await this.communitiesService.findById(id);
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new BadRequestException('Invalid community ID or server error');
+    }
   }
 
   @Get(':id/posts')

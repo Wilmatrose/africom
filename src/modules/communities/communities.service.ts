@@ -85,12 +85,13 @@ export class CommunitiesService {
   }
 
   // ==================================================
-  // FIND BY ID
+  // FIND BY ID (UPDATED FOR PARTICIPANT LIST)
   // ==================================================
   async findById(id: string) {
+    // FIX: Added 'participants' to relations so frontend can check access locally
     const community = await this.communityRepo.findOne({
       where: { id },
-      relations: ['creator'],
+      relations: ['creator', 'participants'], 
     });
 
     if (!community) throw new NotFoundException('Community not found');
@@ -107,11 +108,16 @@ export class CommunitiesService {
         username: community.creator.username,
         avatarUrl: community.creator.avatarUrl,
       } : null,
+      // FIX: Return participants list so Flutter can match _currentUserId
+      participants: community.participants.map(p => ({
+        userId: p.userId,
+        joinedAt: p.joinedAt,
+      })),
     };
   }
 
   // ==================================================
-  // JOIN COMMUNITY
+  // JOIN COMMUNITY (UPDATED WITH CREATOR CREDITING)
   // ==================================================
   async joinCommunity(communityId: string, userId: string) {
     const community = await this.communityRepo.findOne({ where: { id: communityId } });
@@ -139,7 +145,7 @@ export class CommunitiesService {
       return { message: 'Already a member' };
     }
 
-    // CHECK 3: Fetch User
+    // CHECK 3: Fetch Joining User
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new BadRequestException('User not found');
 
@@ -148,21 +154,41 @@ export class CommunitiesService {
       throw new BadRequestException(`Insufficient coins. Need ${community.minCoinsToJoin}, you have ${user.coinBalance}`);
     }
 
-    // DEDUCT COINS
+    // DEDUCT COINS (USER)
     user.coinBalance -= community.minCoinsToJoin;
     await this.userRepo.save(user);
 
-    // LOG TRANSACTION
-    const tx = this.transactionRepo.create({
+    // LOG TRANSACTION (USER DEBIT)
+    const userTx = this.transactionRepo.create({
       userId: user.id,
       amount: community.minCoinsToJoin,
       type: TransactionType.DEBIT,
       category: TransactionCategory.COMMUNITY_JOIN,
-      reference: `community-${community.id}`,
-      metadata: { communityName: community.name },
+      reference: `community-join-${community.id}`,
+      metadata: { communityName: community.name, role: 'member' },
       status: TransactionStatus.COMPLETED,
     });
-    await this.transactionRepo.save(tx);
+    await this.transactionRepo.save(userTx);
+
+    // CREDIT COINS (CREATOR)
+    // Fetch creator to update their balance
+    const creator = await this.userRepo.findOne({ where: { id: community.creatorId } });
+    if (creator) {
+      creator.coinBalance = Number(creator.coinBalance) + Number(community.minCoinsToJoin);
+      await this.userRepo.save(creator);
+
+      // LOG TRANSACTION (CREATOR CREDIT)
+      const creatorTx = this.transactionRepo.create({
+        userId: creator.id,
+        amount: community.minCoinsToJoin,
+        type: TransactionType.CREDIT,
+        category: TransactionCategory.COMMUNITY_JOIN,
+        reference: `community-earning-${community.id}`,
+        metadata: { communityName: community.name, payingUserId: user.id, role: 'creator' },
+        status: TransactionStatus.COMPLETED,
+      });
+      await this.transactionRepo.save(creatorTx);
+    }
 
     // CREATE PARTICIPANT
     const participant = this.participantRepo.create({ communityId, userId });
