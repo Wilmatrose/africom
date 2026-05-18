@@ -7,7 +7,8 @@ import {
   Tournament, 
   GroupMessage, 
   TournamentParticipant, 
-  TournamentReport 
+  TournamentReport,
+  TournamentMatch // <--- 1. Import the new Entity
 } from './tournaments.entity';
 import { User } from '../users/entities/user.entity';
 import { Transaction } from '../wallet/wallet.entity';
@@ -18,9 +19,10 @@ import { Transaction } from '../wallet/wallet.entity';
       Tournament, 
       GroupMessage, 
       TournamentParticipant, 
-      TournamentReport, // Required for the Report Entity
-      User,             // Required for relations (Host/Participant User data)
-      Transaction       // Required for Wallet/Payout logic
+      TournamentReport,
+      TournamentMatch, // <--- 2. Add it to the features list
+      User,
+      Transaction 
     ]),
   ],
   controllers: [TournamentsController],
