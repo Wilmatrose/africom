@@ -85,16 +85,32 @@ export class CommunitiesService {
   }
 
   // ==================================================
-  // FIND BY ID (UPDATED FOR PARTICIPANT LIST)
+  // FIND BY ID (UPDATED FOR CREATOR ACCESS FIX)
   // ==================================================
   async findById(id: string) {
-    // FIX: Added 'participants' to relations so frontend can check access locally
     const community = await this.communityRepo.findOne({
       where: { id },
       relations: ['creator', 'participants'], 
     });
 
     if (!community) throw new NotFoundException('Community not found');
+
+    // 1. Map existing participants from DB
+    const participants = community.participants.map(p => ({
+      userId: p.userId,
+      joinedAt: p.joinedAt,
+    }));
+
+    // 2. FIX: Inject Creator into participants list if missing.
+    // This ensures the Frontend knows the Creator has access without needing to pay/join.
+    const isCreatorInList = participants.some(p => p.userId === community.creatorId);
+
+    if (!isCreatorInList && community.creatorId) {
+      participants.push({
+        userId: community.creatorId,
+        joinedAt: community.createdAt, // Use community creation time
+      });
+    }
 
     return {
       id: community.id,
@@ -108,11 +124,8 @@ export class CommunitiesService {
         username: community.creator.username,
         avatarUrl: community.creator.avatarUrl,
       } : null,
-      // FIX: Return participants list so Flutter can match _currentUserId
-      participants: community.participants.map(p => ({
-        userId: p.userId,
-        joinedAt: p.joinedAt,
-      })),
+      // Return the modified list including the creator
+      participants: participants,
     };
   }
 
@@ -128,7 +141,7 @@ export class CommunitiesService {
     if (community.creatorId === userId) {
       console.log(`User ${userId} is the creator. Allowing free access.`);
       
-      // Check if they are already in the participant list (soft join)
+      // Ensure they are in the participant table (optional, but good for consistency)
       const existing = await this.participantRepo.findOne({ where: { communityId, userId } });
       if (!existing) {
         const participant = this.participantRepo.create({ communityId, userId });
@@ -171,7 +184,6 @@ export class CommunitiesService {
     await this.transactionRepo.save(userTx);
 
     // CREDIT COINS (CREATOR)
-    // Fetch creator to update their balance
     const creator = await this.userRepo.findOne({ where: { id: community.creatorId } });
     if (creator) {
       creator.coinBalance = Number(creator.coinBalance) + Number(community.minCoinsToJoin);
@@ -198,18 +210,16 @@ export class CommunitiesService {
   }
 
   // ==================================================
-  // NEW: EXIT COMMUNITY
+  // EXIT COMMUNITY
   // ==================================================
   async exitCommunity(communityId: string, userId: string) {
     const community = await this.communityRepo.findOne({ where: { id: communityId } });
     if (!community) throw new NotFoundException('Community not found');
 
-    // 1. Prevent Creator from exiting (they must delete or transfer)
     if (community.creatorId === userId) {
       throw new ForbiddenException('Creators cannot exit their own community. Please delete it instead.');
     }
 
-    // 2. Check if user is a member
     const participant = await this.participantRepo.findOne({ 
       where: { communityId, userId } 
     });
@@ -218,14 +228,13 @@ export class CommunitiesService {
       throw new BadRequestException('You are not a member of this community');
     }
 
-    // 3. Remove member
     await this.participantRepo.remove(participant);
 
     return { success: true, message: 'Exited community successfully' };
   }
 
   // ==================================================
-  // NEW: UPDATE COMMUNITY
+  // UPDATE COMMUNITY
   // ==================================================
   async updateCommunity(
     communityId: string, 
@@ -244,12 +253,10 @@ export class CommunitiesService {
 
     let imageUrl = community.imageUrl;
 
-    // Handle File Upload if provided
     if (updates.file) {
       imageUrl = await this.filesService.uploadImage(updates.file);
     }
 
-    // Update fields
     community.name = updates.name || community.name;
     community.description = updates.description !== undefined ? updates.description : community.description;
     community.minCoinsToJoin = updates.minCoinsToJoin !== undefined ? updates.minCoinsToJoin : community.minCoinsToJoin;
@@ -310,8 +317,6 @@ export class CommunitiesService {
       throw new ForbiddenException('You are not authorized to delete this community');
     }
 
-    // With cascade: ['remove'] configured in the Entity, TypeORM handles
-    // deleting related Posts, Reactions, and Participants automatically.
     await this.communityRepo.remove(community);
     
     return { message: 'Community deleted successfully' };
@@ -321,29 +326,23 @@ export class CommunitiesService {
   // REACTION LOGIC
   // ==================================================
   async toggleReaction(postId: string, userId: string, emoji: string) {
-    // 1. Check if post exists
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
 
-    // 2. Check if user has already reacted to this post
     const existingReaction = await this.reactionRepo.findOne({
       where: { postId, userId },
     });
 
     if (existingReaction) {
-      // Case A: User clicked the SAME emoji -> Remove reaction (Toggle off)
       if (existingReaction.emoji === emoji) {
         await this.reactionRepo.remove(existingReaction);
         return { action: 'removed', emoji: null };
-      } 
-      // Case B: User clicked a DIFFERENT emoji -> Update reaction
-      else {
+      } else {
         existingReaction.emoji = emoji;
         await this.reactionRepo.save(existingReaction);
         return { action: 'updated', emoji: emoji };
       }
     } else {
-      // Case C: User has not reacted yet -> Create new reaction
       const newReaction = this.reactionRepo.create({
         postId,
         userId,
@@ -363,21 +362,18 @@ export class CommunitiesService {
       order: { createdAt: 'DESC' } 
     });
 
-    // Attach reaction counts to each post
     const postsWithReactions = await Promise.all(
       posts.map(async (post) => {
         const reactions = await this.reactionRepo.find({
           where: { postId: post.id },
-          select: ['emoji'], // Only fetch emoji to save bandwidth
+          select: ['emoji'],
         });
 
-        // Count occurrences of each emoji
         const counts = reactions.reduce((acc, reaction) => {
           acc[reaction.emoji] = (acc[reaction.emoji] || 0) + 1;
           return acc;
         }, {} as Record<string, number>);
 
-        // Convert to array format for frontend: [{ emoji: "❤️", count: 5 }, ...]
         const reactionList = Object.keys(counts).map((emoji) => ({
           emoji,
           count: counts[emoji],
