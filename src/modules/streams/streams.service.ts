@@ -151,6 +151,14 @@ export class StreamsService {
       .getMany();
   }
 
+
+  async findActiveStreamByCreator(creatorId: string) {
+    return this.sessionRepo.findOne({
+      where: { creatorId: creatorId, isLive: true },
+      relations: ['creator']
+    });
+  }
+
   async getStreamForManager(sessionId: string) {
     const session = await this.sessionRepo.findOne({ 
       where: { id: sessionId },

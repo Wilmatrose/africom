@@ -70,4 +70,13 @@ export class StreamsController {
   async getManagerData(@Param('sessionId') sessionId: string) {
     return this.streamsService.getStreamForManager(sessionId);
   }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('my-active-stream')
+  @ApiOperation({ summary: 'Check if current user has an active stream' })
+  async getMyActiveStream(@Req() req) {
+    const stream = await this.streamsService.findActiveStreamByCreator(req.user.id);
+    return stream; // Returns null if not found, or the stream object if live
+  }
+
 }
