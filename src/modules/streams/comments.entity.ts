@@ -5,16 +5,17 @@ export class Comment {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ type: 'uuid' }) // Explicitly define as UUID for DB consistency
   sessionId: string; 
 
-  @Column()
+  @Column({ type: 'uuid' })
   userId: string;
 
   @Column()
   username: string;
 
-  @Column()
+  // FIX: Use 'text' type to allow long messages without character limits
+  @Column({ type: 'text' })
   message: string;
 
   @Column({ default: 'TEXT' })

@@ -9,15 +9,15 @@ export class LiveSession {
   @Column()
   creatorId: string;
 
+  // UPDATED: Removed 'TIKTOK' from the enum
   @Column()
-  platform: 'YOUTUBE' | 'TWITCH' | 'TIKTOK';
+  platform: 'YOUTUBE' | 'TWITCH';
 
-  // FIX: Changed to 'text' to accommodate full URLs for TikTok short links
-  // Previously, this might have been a varchar(255) which could cut off long URLs.
+  // Stores the Video ID (YouTube) or Channel Name (Twitch)
   @Column({ type: 'text' })
   platformStreamId: string; 
 
-  // The full URL pasted by the creator (useful for frontend if ID isn't enough)
+  // The full URL pasted by the creator
   @Column({ type: 'text', nullable: true })
   streamUrl: string;
 

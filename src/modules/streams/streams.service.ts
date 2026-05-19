@@ -12,11 +12,10 @@ export class StreamsService {
 
   /**
    * Helper: Robust URL Parsing
-   * Handles standard links, short links, and live paths for all platforms.
+   * Handles standard links, short links, and live paths for YouTube and Twitch.
    */
   private parseStreamUrl(platform: string, url: string): { cleanId: string, valid: boolean } {
     try {
-      // Ensure URL is parseable
       const urlObj = new URL(url);
       
       if (platform === 'YOUTUBE') {
@@ -40,25 +39,6 @@ export class StreamsService {
 
         if (videoId) return { cleanId: videoId, valid: true };
       } 
-      else if (platform === 'TIKTOK') {
-        // Check if it's a TikTok domain (handles www.tiktok.com and vt.tiktok.com)
-        if (urlObj.hostname.includes('tiktok.com')) {
-          
-          // Attempt 1: Extract Username from path (e.g., /@username/live or /@username)
-          const pathParts = urlObj.pathname.split('/').filter(p => p);
-          const usernamePart = pathParts.find(p => p.startsWith('@'));
-
-          if (usernamePart) {
-            // Found a username like "faith"
-            return { cleanId: usernamePart.substring(1), valid: true };
-          }
-
-          // Attempt 2: Handle Short Links (vt.tiktok.com/XYZ)
-          // We cannot extract a username from a short link without a network redirect.
-          // STRATEGY: Save the full URL as the ID so the frontend can still use it.
-          return { cleanId: url, valid: true };
-        }
-      }
       else if (platform === 'TWITCH') {
         // Handle twitch.tv and www.twitch.tv
         if (urlObj.hostname.includes('twitch.tv')) {
@@ -66,11 +46,11 @@ export class StreamsService {
           // Twitch URLs are usually twitch.tv/username
           if (pathParts.length > 0) {
             // We take the first part (e.g., 'faith')
-            // We ignore secondary parts like /clips /videos for now, focusing on live channel
             return { cleanId: pathParts[0], valid: true };
           }
         }
       }
+      // TIKTOK REMOVED
 
       return { cleanId: '', valid: false };
     } catch (e) {
@@ -79,16 +59,16 @@ export class StreamsService {
   }
 
   async startSession(creatorId: string, platform: string, streamUrl: string, title: string) {
-    const upperPlatform = platform.toUpperCase() as 'YOUTUBE' | 'TWITCH' | 'TIKTOK';
-    if (!['YOUTUBE', 'TWITCH', 'TIKTOK'].includes(upperPlatform)) {
-      throw new BadRequestException('Invalid platform selected.');
+    // Updated to only allow YOUTUBE and TWITCH
+    const upperPlatform = platform.toUpperCase() as 'YOUTUBE' | 'TWITCH';
+    if (!['YOUTUBE', 'TWITCH'].includes(upperPlatform)) {
+      throw new BadRequestException('Invalid platform selected. Only YouTube and Twitch are supported.');
     }
 
     if (!streamUrl) {
         throw new BadRequestException('Stream URL is required.');
     }
 
-    // Use the improved parser
     const { cleanId, valid } = this.parseStreamUrl(upperPlatform, streamUrl);
 
     if (!valid || !cleanId) {
@@ -100,7 +80,7 @@ export class StreamsService {
     const session = this.sessionRepo.create({
       creatorId,
       platform: upperPlatform,
-      platformStreamId: cleanId, // This now holds the VideoID, Username, or Full URL (for short links)
+      platformStreamId: cleanId,
       streamUrl: streamUrl,
       title: title || 'Live Stream',
       isLive: true,

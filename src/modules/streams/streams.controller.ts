@@ -6,17 +6,21 @@ import {
   Param, 
   UseGuards, 
   Req, 
-  ForbiddenException,
-  NotFoundException
+  ForbiddenException
 } from '@nestjs/common';
 import { StreamsService } from './streams.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiProperty } from '@nestjs/swagger';
 
-// DTO for creating a stream
+// UPDATED DTO: Restricted to valid platforms
 class StartStreamDto {
-  platform: string;
+  @ApiProperty({ enum: ['YOUTUBE', 'TWITCH'], description: 'The streaming platform' })
+  platform: 'YOUTUBE' | 'TWITCH';
+
+  @ApiProperty({ example: 'https://www.youtube.com/live/xyz' })
   streamUrl: string;
+
+  @ApiProperty({ example: 'My Live Stream' })
   title: string;
 }
 
@@ -76,7 +80,6 @@ export class StreamsController {
   @ApiOperation({ summary: 'Check if current user has an active stream' })
   async getMyActiveStream(@Req() req) {
     const stream = await this.streamsService.findActiveStreamByCreator(req.user.id);
-    return stream; // Returns null if not found, or the stream object if live
+    return stream; 
   }
-
 }
