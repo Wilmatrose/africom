@@ -45,12 +45,10 @@ export class StreamsService {
           const pathParts = urlObj.pathname.split('/').filter(p => p);
           // Twitch URLs are usually twitch.tv/username
           if (pathParts.length > 0) {
-            // We take the first part (e.g., 'faith')
             return { cleanId: pathParts[0], valid: true };
           }
         }
       }
-      // TIKTOK REMOVED
 
       return { cleanId: '', valid: false };
     } catch (e) {
@@ -59,16 +57,26 @@ export class StreamsService {
   }
 
   async startSession(creatorId: string, platform: string, streamUrl: string, title: string) {
-    // Updated to only allow YOUTUBE and TWITCH
+    // 1. Validate Platform
     const upperPlatform = platform.toUpperCase() as 'YOUTUBE' | 'TWITCH';
     if (!['YOUTUBE', 'TWITCH'].includes(upperPlatform)) {
       throw new BadRequestException('Invalid platform selected. Only YouTube and Twitch are supported.');
+    }
+
+    // 2. CRITICAL: Check if user is already live
+    const existingStream = await this.sessionRepo.findOne({ 
+      where: { creatorId: creatorId, isLive: true } 
+    });
+    
+    if (existingStream) {
+      throw new BadRequestException('You are already live. End your current stream before starting a new one.');
     }
 
     if (!streamUrl) {
         throw new BadRequestException('Stream URL is required.');
     }
 
+    // 3. Parse and Validate URL
     const { cleanId, valid } = this.parseStreamUrl(upperPlatform, streamUrl);
 
     if (!valid || !cleanId) {
@@ -77,6 +85,7 @@ export class StreamsService {
       );
     }
 
+    // 4. Create Session
     const session = this.sessionRepo.create({
       creatorId,
       platform: upperPlatform,
